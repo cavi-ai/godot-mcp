@@ -60,7 +60,7 @@ def inside(root, relative):
     return files.inside(root, rel)
 
 
-def read_glb(path):
+def read_glb(path, *, static_review=True):
     raw = files.read_bytes(path, LIMIT)
     if len(raw) < 20:
         raise ValueError("Invalid GLB size")
@@ -71,7 +71,7 @@ def read_glb(path):
     if kind != b"JSON" or n % 4 or n + 20 > len(raw):
         raise ValueError("Invalid GLB JSON chunk")
     document = json.loads(raw[20 : 20 + n])
-    if document.get("skins") or document.get("animations"):
+    if static_review and (document.get("skins") or document.get("animations")):
         raise ValueError("Only static GLB assets are supported")
     if not document.get("meshes") or not document.get("nodes"):
         raise ValueError("GLB needs mesh nodes")
@@ -102,7 +102,7 @@ def read_glb(path):
         ):
             raise ValueError("Invalid embedded buffer view")
     images = document.get("images", [])
-    if not images or any(
+    if (static_review and not images) or any(
         "uri" in image
         or type(image.get("bufferView")) is not int
         or not 0 <= image["bufferView"] < len(views)

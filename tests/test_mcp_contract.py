@@ -40,6 +40,7 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                     set(tools),
                     {
                         "godot_status",
+                        "godot_asset_inspect",
                         "godot_review_prepare",
                         "godot_review_inspect",
                         "godot_review_capture",
@@ -65,6 +66,19 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(status.is_error)
                 for name, args in [
                     ("godot_status", {"surprise": True}),
+                    (
+                        "godot_asset_inspect",
+                        {"source": "asset.glb", "directory": "out", "surprise": True},
+                    ),
+                    ("godot_asset_inspect", {}),
+                    (
+                        "godot_asset_inspect",
+                        {"source": "../outside.glb", "directory": "out"},
+                    ),
+                    (
+                        "godot_asset_inspect",
+                        {"source": "asset.glb", "directory": "out"},
+                    ),
                     (
                         "godot_review_prepare",
                         {

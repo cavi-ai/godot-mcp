@@ -1,0 +1,32 @@
+name: Checks
+on:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.15'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --dev
+      - run: uv run --locked python -m unittest discover -s tests
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv build
+      - name: Build MCP evaluator
+        run: |
+          uv run --locked python evals/evaluator.py build --root "$RUNNER_TEMP/mcp-eval" --branch main
+          echo "MCPEVAL_EXECUTABLE=$RUNNER_TEMP/mcp-eval/bin/mcpeval" >> "$GITHUB_ENV"
+          mkdir -p .tmp/evals/evaluator
+          cp "$RUNNER_TEMP/mcp-eval/"{build-record.json,build.stdout,build.stderr,version.stdout,version.stderr,.crates2.json} .tmp/evals/evaluator/
+      - run: uv run --locked python evals/run.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: godot-mcp-evaluation
+          path: .tmp/evals/
+          include-hidden-files: true
+          if-no-files-found: ignore

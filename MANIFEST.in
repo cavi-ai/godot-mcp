@@ -1,0 +1,9 @@
+include README.md LICENSE CONTRIBUTING.md SECURITY.md pyproject.toml uv.lock
+recursive-include src/godot_mcp *.py *.gd *.mjs *.tscn *.godot
+recursive-include tests *.py
+recursive-include evals *.py *.json
+prune .venv
+prune .tmp
+prune dist
+prune build
+global-exclude __pycache__ *.py[cod] .DS_Store

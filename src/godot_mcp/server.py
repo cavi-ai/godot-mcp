@@ -10,7 +10,7 @@ from cavi_mcp_core.contracts import failure
 from cavi_mcp_core.server import READ_ONLY, Server
 from mcp.types import ToolAnnotations
 
-from . import review
+from . import inspection, review
 
 
 class GodotServer(Server):
@@ -74,6 +74,12 @@ async def godot_review_inspect(directory: str) -> dict[str, Any]:
 async def godot_review_capture(directory: str) -> dict[str, Any]:
     """Capture the prepared review in an isolated browser."""
     return await call(review.capture, workspace(), directory)
+
+
+@mcp.tool(annotations=WRITES)
+async def godot_asset_inspect(source: str, directory: str) -> dict[str, Any]:
+    """Inspect a self-contained GLB with Godot and save a source-bound scene report."""
+    return await call(inspection.inspect_asset, workspace(), source, directory)
 
 
 def main():

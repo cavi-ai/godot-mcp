@@ -45,6 +45,7 @@ async def exercise(env):
         tools = {tool.name: tool for tool in (await session.list_tools()).tools}
         expected = {
             "godot_status",
+            "godot_asset_inspect",
             "godot_review_prepare",
             "godot_review_inspect",
             "godot_review_capture",

@@ -1,6 +1,6 @@
 # Cavi Godot MCP
 
-Review a static textured GLB as an interactive Godot Web scene and capture a source-bound image. The server runs locally over MCP stdio.
+Inspect static and animated GLB assets with Godot, then review static models in an interactive Web scene. The server runs locally over MCP stdio.
 
 ## Install
 
@@ -29,7 +29,13 @@ The command is `.venv/bin/cavi-godot-mcp`. Configure an MCP client with that exe
 }
 ```
 
-Capture requires macOS or Linux. Use a Godot editor and matching single-threaded Web export template, a headless Chromium with WebGL 2 support, and Node.js 22 or newer. The workspace must already exist. Tool discovery and `godot_status` do not launch these programs.
+Native inspection and capture require macOS or Linux. `godot_asset_inspect` requires only `CAVI_GAME_ART_WORKSPACE` and `CAVI_GODOT_BIN`. Static captures also require the Web template, Chromium, and Node paths. Use a Godot editor and matching single-threaded Web export template, a headless Chromium with WebGL 2 support, and Node.js 22 or newer. The workspace must already exist. Tool discovery and `godot_status` do not launch these programs.
+
+## Inspect an asset
+
+Inspect static and animated GLB assets with Godot. Reports scene nodes, mesh and material details, skeletons, and animation clips.
+
+Inspection uses Godot’s headless runtime importer and does not require Chromium or Web export templates. Mesh-node bounds describe the imported rest pose; surface records report geometry, UV presence, and the material Godot uses. Animated capture remains separate from structural inspection. Call `godot_asset_inspect` with workspace-relative `source` and a new workspace-relative `directory`. Inputs are self-contained GLB 2.0 files up to 64 MiB. Reports cap node and surface records at 256, bone records at 256, and clip records at 128, with totals and truncation flags. If inspection fails, preserve its output directory and inspect the input receipt and process logs before retrying.
 
 ## Review an asset
 

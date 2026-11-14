@@ -137,5 +137,47 @@
     },
     "kind": "success",
     "pending": true
+  },
+  {
+    "id": "asset-inspect-missing",
+    "tool": "godot_asset_inspect",
+    "arguments": {},
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "asset-inspect-extra",
+    "tool": "godot_asset_inspect",
+    "arguments": {
+      "source": "asset.glb",
+      "directory": "out",
+      "unexpected": true
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "asset-inspect-escape",
+    "tool": "godot_asset_inspect",
+    "arguments": {
+      "source": "../outside.glb",
+      "directory": "out"
+    },
+    "kind": "safety",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "asset-inspect-unconfigured",
+    "tool": "godot_asset_inspect",
+    "arguments": {
+      "source": "asset.glb",
+      "directory": "out"
+    },
+    "kind": "safety",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
   }
 ]

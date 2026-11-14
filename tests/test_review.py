@@ -275,7 +275,7 @@ class SnapshotTests(unittest.TestCase):
                 patch("shutil.copyfile", side_effect=altered),
                 patch("godot_mcp.review.run_owned") as run,
             ):
-                with self.assertRaisesRegex(ValueError, "Copied source changed"):
+                with self.assertRaisesRegex(RuntimeError, "Copied source changed"):
                     capture(root, "review")
                 run.assert_not_called()
 
@@ -380,7 +380,7 @@ class MidCaptureDriftTests(unittest.TestCase):
                     out = Path(command[-1]).parent
                     (out / "index.wasm").write_bytes(b"wasm")
                 if label == "browser":
-                    out = Path(command[-2])
+                    out = Path(command[-1])
                     out.write_bytes(b"png")
                     Path(str(out) + ".json").write_text("{}")
                     tool.write_text("v2")
@@ -390,7 +390,11 @@ class MidCaptureDriftTests(unittest.TestCase):
                 patch.dict(os.environ, env),
                 patch("importlib.metadata.version", return_value="fixture"),
                 patch("godot_mcp.review.run_owned", side_effect=fake_run),
-                self.assertRaisesRegex(ValueError, "input changed during capture"),
+                patch(
+                    "godot_mcp.review.run_with_browser",
+                    side_effect=lambda command, profile, task, evidence: task(1234),
+                ),
+                self.assertRaisesRegex(RuntimeError, "input changed during capture"),
             ):
                 capture(root, "review")
             self.assertEqual(inspect(root, "review")["state"], "prepared")
@@ -466,3 +470,295 @@ class PersistentCensusTests(unittest.TestCase):
             )
             self.assertIsNotNone(metadata["execution_error"])
             self.assertTrue((root / "review" / ".capture.pending").exists())
+
+
+class BrowserOwnershipTests(unittest.TestCase):
+    def test_missing_initial_identity_still_reaps_owned_browser(self):
+        import json
+        import os
+        import sys
+        from unittest.mock import patch
+
+        from godot_mcp.review import CleanupUnverified, run_with_browser
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            with (
+                patch("godot_mcp.review.processes.inspect", return_value=None),
+                self.assertRaises(CleanupUnverified),
+            ):
+                run_with_browser(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    root,
+                    lambda port: None,
+                    root,
+                )
+            info = json.loads((root / "browser-process.json").read_text())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(info["pid"], 0)
+            self.assertIsNotNone(info["cleanup_error"])
+
+
+class RegisteredBrowserTests(unittest.TestCase):
+    def test_browser_family_is_registered_sampled_and_reaped(self):
+        import json
+        import os
+        import sys
+        import time
+        from unittest.mock import patch
+
+        from godot_mcp.review import owned_exec, run_with_browser
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            profile = root / "profile"
+            profile.mkdir()
+            (profile / "DevToolsActivePort").write_text("1234\n")
+
+            def task(port):
+                self.assertEqual(port, 1234)
+                time.sleep(0.3)
+
+            with patch(
+                "godot_mcp.review.owned_exec.command", wraps=owned_exec.command
+            ) as gate:
+                run_with_browser(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    profile,
+                    task,
+                    root,
+                )
+            self.assertTrue(gate.called)
+            info = json.loads((root / "browser-process.json").read_text())
+            self.assertIsNone(info["cleanup_error"])
+            self.assertTrue(info["identity"]["birth"])
+            self.assertTrue(info["known"])
+            with self.assertRaises(ProcessLookupError):
+                os.kill(info["pid"], 0)
+
+
+class CoreOwnerTests(unittest.TestCase):
+    def test_browser_registers_with_core_owner_and_is_retired(self):
+        import os
+        import sys
+
+        from cavi_mcp_core import processes, supervision
+
+        with TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            profile = root / "profile"
+            profile.mkdir()
+            (profile / "DevToolsActivePort").write_text("1234\n")
+            evidence = root / "evidence"
+            evidence.mkdir()
+            code = (
+                "import sys,time; from pathlib import Path; from godot_mcp.review import run_with_browser; "
+                'run_with_browser([sys.executable,"-c","import time;time.sleep(60)"], Path(sys.argv[1]), lambda port: time.sleep(.3), Path(sys.argv[2]))'
+            )
+            env = dict(os.environ)
+            if env.get("CAVI_MCP_PROCESS_OWNER"):
+                self.skipTest("An existing process owner cannot be replaced")
+            result = supervision.run(
+                [sys.executable, "-c", code, str(profile), str(evidence)],
+                cwd=str(Path.cwd()),
+                env=env,
+                directory=root / "owner",
+                max_seconds=20,
+                max_rss_kib=1048576,
+                minimum_available_kib=0,
+            )
+            self.assertEqual(result["exit_code"], 0, result)
+            self.assertIsNone(result["error"], result)
+            self.assertIsNone(result["cleanup_error"], result)
+            records = list((root / "owner" / "records").glob("*.json"))
+            self.assertGreaterEqual(len(records), 2)
+            for record in records:
+                import json
+
+                row = json.loads(record.read_text())
+                self.assertIsNone(processes.inspect(row["request"]["pid"]))
+
+
+class CoreOwnedCommandTests(unittest.TestCase):
+    def test_subprocesses_respect_existing_core_owner(self):
+        import os
+        import sys
+
+        from cavi_mcp_core import supervision
+
+        with TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            evidence = root / "evidence"
+            evidence.mkdir()
+            code = (
+                "import sys; from pathlib import Path; from godot_mcp.review import run_owned; "
+                'run_owned([sys.executable,"-c","print(123)"], 5, Path(sys.argv[1]), "child")'
+            )
+            env = dict(os.environ)
+            if env.get("CAVI_MCP_PROCESS_OWNER"):
+                self.skipTest("An existing process owner cannot be replaced")
+            result = supervision.run(
+                [sys.executable, "-c", code, str(evidence)],
+                cwd=str(Path.cwd()),
+                env=env,
+                directory=root / "owner",
+                max_seconds=20,
+                max_rss_kib=1048576,
+                minimum_available_kib=0,
+            )
+            self.assertEqual(result["exit_code"], 0, result)
+            self.assertIsNone(result["error"], result)
+            self.assertIsNone(result["cleanup_error"], result)
+            self.assertEqual((evidence / "child.stdout").read_text(), "123\n")
+            self.assertGreaterEqual(
+                len(list((root / "owner" / "records").glob("*.json"))), 2
+            )
+
+
+class EvidenceWriteFaultTests(unittest.TestCase):
+    def test_uncertain_cleanup_remains_primary_when_evidence_write_fails(self):
+        import os
+        import subprocess
+        import sys
+        from unittest.mock import patch
+
+        from godot_mcp.review import CleanupUnverified, atomic_json, capture, run_owned
+        from godot_mcp.server import mcp
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            prepare(root, "mesh.glb", "review")
+            tool = root / "tool"
+            tool.write_text("tool")
+            env = {
+                key: str(tool)
+                for key in (
+                    "CAVI_GODOT_BIN",
+                    "CAVI_GODOT_WEB_TEMPLATE",
+                    "CAVI_CHROMIUM_BIN",
+                    "CAVI_NODE_BIN",
+                )
+            }
+
+            def fail_ps(command, **kwargs):
+                return subprocess.CompletedProcess(command, 1, "", "census failed")
+
+            def fail_evidence(path, value):
+                if str(path).endswith(".groups.json"):
+                    raise OSError("evidence unavailable")
+                return atomic_json(path, value)
+
+            def child(command, timeout, evidence, label):
+                return run_owned(
+                    [sys.executable, "-c", "import time;time.sleep(0.2)"],
+                    5,
+                    evidence,
+                    label,
+                )
+
+            with (
+                patch.dict(os.environ, env),
+                patch("importlib.metadata.version", return_value="fixture"),
+                patch("godot_mcp.review.run_owned", side_effect=child),
+                patch("godot_mcp.review.atomic_json", side_effect=fail_evidence),
+                patch("subprocess.run", side_effect=fail_ps),
+            ):
+                with self.assertRaises(CleanupUnverified) as failure:
+                    capture(root, "review")
+                self.assertEqual(
+                    mcp.failure(
+                        "godot_review_capture", failure.exception
+                    ).structured_content["error"]["code"],
+                    "CLEANUP_UNVERIFIED",
+                )
+                self.assertTrue((root / "review" / ".capture.pending").exists())
+                with self.assertRaises(CleanupUnverified):
+                    capture(root, "review")
+
+
+class BoundedEvidenceTests(unittest.TestCase):
+    def test_fifo_artifact_is_rejected_without_blocking(self):
+        import os
+
+        from godot_mcp.review import digest
+
+        with TemporaryDirectory() as d:
+            fifo = Path(d) / "pipe"
+            os.mkfifo(fifo)
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                digest(fifo)
+
+    def test_oversize_receipt_is_rejected(self):
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            prepare(root, "mesh.glb", "review")
+            (root / "review" / "review.json").write_bytes(b" " * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(ValueError, "bounded regular file"):
+                inspect(root, "review")
+
+    def test_oversize_artifact_is_rejected(self):
+        import json
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review")
+            big = root / "review" / "oversize"
+            with big.open("wb") as f:
+                f.truncate(256 * 1024 * 1024 + 1)
+            receipt["artifacts"] = {"oversize": "0" * 64}
+            (root / "review" / "review.json").write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(ValueError, "bounded regular file"):
+                inspect(root, "review")
+
+
+class OversizeSealTests(unittest.TestCase):
+    def test_oversize_export_is_not_sealed(self):
+        import os
+        from unittest.mock import patch
+
+        from godot_mcp.review import capture
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            prepare(root, "mesh.glb", "review")
+            tool = root / "tool"
+            tool.write_text("tool")
+            env = {
+                key: str(tool)
+                for key in (
+                    "CAVI_GODOT_BIN",
+                    "CAVI_GODOT_WEB_TEMPLATE",
+                    "CAVI_CHROMIUM_BIN",
+                    "CAVI_NODE_BIN",
+                )
+            }
+
+            def fake_run(command, timeout, evidence, label):
+                (evidence / (label + ".stderr")).write_text("")
+                if label == "export":
+                    with (Path(command[-1]).parent / "index.wasm").open("wb") as stream:
+                        stream.truncate(256 * 1024 * 1024 + 1)
+                if label == "browser":
+                    path = Path(command[-1])
+                    path.write_bytes(b"png")
+                    Path(str(path) + ".json").write_text("{}")
+                return "fixture"
+
+            with (
+                patch.dict(os.environ, env),
+                patch("importlib.metadata.version", return_value="fixture"),
+                patch("godot_mcp.review.run_owned", side_effect=fake_run),
+                patch(
+                    "godot_mcp.review.run_with_browser",
+                    side_effect=lambda command, profile, task, evidence: task(1),
+                ),
+                self.assertRaisesRegex(RuntimeError, "bounded regular file"),
+            ):
+                capture(root, "review")
+            self.assertEqual(inspect(root, "review")["state"], "prepared")
+            attempt = next((root / "review" / "attempts").iterdir())
+            self.assertFalse((attempt / "bundle").exists())

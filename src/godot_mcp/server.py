@@ -1,22 +1,48 @@
-"""Scoped tools for reviewing static Godot assets."""
+"""MCP tools for reviewing static Godot assets."""
 
 import os
+from functools import partial
 from pathlib import Path
+from typing import Any, Literal
 
-from mcp.server.mcpserver import MCPServer
+import anyio
+from cavi_mcp_core.contracts import failure
+from cavi_mcp_core.server import READ_ONLY, Server
+from mcp.types import ToolAnnotations
 
 from . import review
 
-mcp = MCPServer("godot-asset-review")
+
+class GodotServer(Server):
+    def failure(self, name, error):
+        action = (
+            "godot_review_inspect"
+            if name == "godot_review_capture"
+            else "inspect_inputs"
+        )
+        return failure(name, error, unknown_next_action=action)
+
+
+mcp = GodotServer("godot-asset-review", package="cavi-godot-mcp")
+WRITES = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+)
 
 
 def workspace():
-    return Path(os.environ["CAVI_GAME_ART_WORKSPACE"]).resolve(strict=True)
+    value = os.environ.get("CAVI_GAME_ART_WORKSPACE")
+    if not value:
+        raise ValueError("CAVI_GAME_ART_WORKSPACE is required")
+    return Path(value).resolve(strict=True)
 
 
-@mcp.tool()
-def godot_status() -> dict:
-    """Read configured paths without launching a process."""
+async def call(function, *args):
+    return await anyio.to_thread.run_sync(partial(function, *args))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def godot_status() -> dict[str, bool]:
+    """Report whether each review dependency is configured without launching it."""
     return {
         name: bool(os.environ.get(name))
         for name in (
@@ -28,24 +54,26 @@ def godot_status() -> dict:
     }
 
 
-@mcp.tool()
-def godot_review_prepare(
-    source: str, directory: str, view: str = "three-quarter"
-) -> dict:
-    """Prepare a new owned static GLB review."""
-    return review.prepare(workspace(), source, directory, view)
+@mcp.tool(annotations=WRITES)
+async def godot_review_prepare(
+    source: str,
+    directory: str,
+    view: Literal["front", "three-quarter", "side"] = "three-quarter",
+) -> dict[str, Any]:
+    """Prepare a new owned static GLB review in the workspace."""
+    return await call(review.prepare, workspace(), source, directory, view)
 
 
-@mcp.tool()
-def godot_review_inspect(directory: str) -> dict:
-    """Check review source and artifact hashes."""
-    return review.inspect(workspace(), directory)
+@mcp.tool(annotations=READ_ONLY)
+async def godot_review_inspect(directory: str) -> dict[str, Any]:
+    """Check review hashes and report pending cleanup and the latest attempt."""
+    return await call(review.inspect, workspace(), directory)
 
 
-@mcp.tool()
-def godot_review_capture(directory: str) -> dict:
+@mcp.tool(annotations=WRITES)
+async def godot_review_capture(directory: str) -> dict[str, Any]:
     """Capture the prepared review in an isolated browser."""
-    return review.capture(workspace(), directory)
+    return await call(review.capture, workspace(), directory)
 
 
 def main():

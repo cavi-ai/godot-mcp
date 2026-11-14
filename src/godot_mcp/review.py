@@ -3,36 +3,66 @@
 import hashlib
 import json
 import os
+import stat
 import struct
 import tempfile
 from datetime import UTC
 from pathlib import Path
 
+from cavi_mcp_core import files, journal, owned_exec, processes
+from cavi_mcp_core.contracts import OperationUnknown
+
 LIMIT = 64 * 1024 * 1024
+ARTIFACT_LIMIT = 256 * 1024 * 1024
 
 
-class CleanupUnverified(RuntimeError):
+class CleanupUnverified(OperationUnknown):
     """A spawned process group may still be active."""
 
+    def __init__(self, message):
+        super().__init__(message, code="CLEANUP_UNVERIFIED")
 
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def digest(path, limit=None):
+    """Hash an unchanged regular file without buffering it in memory."""
+    path = Path(path)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    result = hashlib.sha256()
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or (
+            limit is not None and before.st_size > limit
+        ):
+            raise ValueError("Expected a bounded regular file")
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            result.update(chunk)
+        after = os.fstat(stream.fileno())
+    current = path.stat()
+
+    def identity(info):
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    if identity(before) != identity(after) or identity(after) != identity(current):
+        raise ValueError("Input changed while hashing")
+    return result.hexdigest()
 
 
 def inside(root, relative):
-    root = Path(root).resolve(strict=True)
     rel = Path(relative)
     if rel.is_absolute() or not rel.parts or ".." in rel.parts:
         raise ValueError("Path must be relative to the workspace")
-    path = (root / rel).resolve()
-    if path == root or not path.is_relative_to(root):
-        raise ValueError("Path must be inside the workspace")
-    return path
+    return files.inside(root, rel)
 
 
 def read_glb(path):
-    raw = path.read_bytes()
-    if len(raw) < 20 or len(raw) > LIMIT:
+    raw = files.read_bytes(path, LIMIT)
+    if len(raw) < 20:
         raise ValueError("Invalid GLB size")
     magic, version, length = struct.unpack_from("<4sII", raw)
     if magic != b"glTF" or version != 2 or length != len(raw):
@@ -106,16 +136,7 @@ def read_glb(path):
 
 
 def atomic_json(path, value):
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".receipt-")
-    try:
-        with os.fdopen(fd, "w") as stream:
-            json.dump(value, stream, sort_keys=True, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(name, path)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
+    journal.write_json(path, value)
 
 
 def prepare(root, source, directory, view="three-quarter"):
@@ -125,12 +146,13 @@ def prepare(root, source, directory, view="three-quarter"):
     if not src.is_file() or src.suffix.lower() != ".glb":
         raise ValueError("Source must be a GLB file")
     read_glb(src)
+    source_sha256 = digest(src, LIMIT)
     dest.mkdir(parents=False, exist_ok=False)
     receipt = {
         "version": 1,
         "kind": "godot-asset-review",
         "source": source,
-        "source_sha256": digest(src),
+        "source_sha256": source_sha256,
         "view": view,
         "state": "prepared",
     }
@@ -140,8 +162,13 @@ def prepare(root, source, directory, view="three-quarter"):
         "source_sha256": receipt["source_sha256"],
         "view": view,
     }
-    atomic_json(dest / "owner.json", owner)
-    atomic_json(dest / "review.json", receipt)
+    try:
+        atomic_json(dest / "owner.json", owner)
+        atomic_json(dest / "review.json", receipt)
+    except Exception as exc:
+        raise OperationUnknown(
+            "Preparation did not complete; inspect the output directory"
+        ) from exc
     return receipt
 
 
@@ -159,7 +186,7 @@ def provider_identity():
 
 
 def input_snapshot(root, receipt, tools):
-    source_hash = digest(inside(root, receipt["source"]))
+    source_hash = digest(inside(root, receipt["source"]), LIMIT)
     if source_hash != receipt["source_sha256"]:
         raise ValueError("Source changed")
     return {
@@ -170,19 +197,50 @@ def input_snapshot(root, receipt, tools):
     }
 
 
-def inspect(root, directory):
+def inspect(root, directory, include_status=True):
     dest = inside(root, directory)
-    receipt = json.loads((dest / "review.json").read_text())
+    receipt = files.load_json(dest / "review.json")
+    if not isinstance(receipt, dict):
+        raise ValueError("Invalid review receipt")  # noqa: TRY004 - malformed input
     if receipt.get("kind") != "godot-asset-review" or receipt.get("version") != 1:
         raise ValueError("Invalid review ownership marker")
-    owner = json.loads((dest / "owner.json").read_text())
+    if (
+        not isinstance(receipt.get("source"), str)
+        or not isinstance(receipt.get("source_sha256"), str)
+        or receipt.get("view") not in ("front", "three-quarter", "side")
+        or receipt.get("state") not in ("prepared", "captured")
+        or not isinstance(receipt.get("artifacts", {}), dict)
+        or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in receipt.get("artifacts", {}).items()
+        )
+    ):
+        raise ValueError("Invalid review receipt")
+    owner = files.load_json(dest / "owner.json")
+    if not isinstance(owner, dict) or not all(
+        key in receipt for key in ("kind", "source", "source_sha256", "view")
+    ):
+        raise ValueError("Invalid review ownership marker")
     if owner != {
         key: receipt[key] for key in ("kind", "source", "source_sha256", "view")
     }:
         raise ValueError("Review ownership marker changed")
-    if digest(inside(root, receipt["source"])) != receipt["source_sha256"]:
+    if digest(inside(root, receipt["source"]), LIMIT) != receipt["source_sha256"]:
         raise ValueError("Source changed")
     if receipt.get("state") == "captured":
+        inputs = receipt.get("inputs")
+        names = {
+            "CAVI_GODOT_BIN",
+            "CAVI_GODOT_WEB_TEMPLATE",
+            "CAVI_CHROMIUM_BIN",
+            "CAVI_NODE_BIN",
+        }
+        if (
+            not isinstance(inputs, dict)
+            or not isinstance(inputs.get("tools"), dict)
+            or set(inputs["tools"]) != names
+        ):
+            raise ValueError("Invalid review inputs")
         tools = {
             name: Path(os.environ[name]).resolve(strict=True)
             for name in receipt["inputs"]["tools"]
@@ -191,8 +249,18 @@ def inspect(root, directory):
             raise ValueError("Review input changed")
     for relative, expected in receipt.get("artifacts", {}).items():
         path = (dest / relative).resolve()
-        if not path.is_relative_to(dest) or digest(path) != expected:
+        if not path.is_relative_to(dest) or digest(path, ARTIFACT_LIMIT) != expected:
             raise ValueError("Review artifact changed")
+    if include_status:
+        receipt = dict(receipt)
+        receipt["cleanup_pending"] = (dest / ".capture.pending").exists()
+        attempts = dest / "attempts"
+        entries = (
+            [p for p in attempts.iterdir() if p.is_dir()] if attempts.exists() else []
+        )
+        receipt["latest_attempt"] = (
+            max(entries, key=lambda p: p.stat().st_mtime_ns).name if entries else None
+        )
     return receipt
 
 
@@ -206,7 +274,7 @@ def run_owned(command, timeout, evidence=None, label="process"):
 
     def group_members(group):
         result = subprocess.run(
-            ["ps", "-axo", "pid=,pgid=,uid=,stat="],
+            owned_exec.command(["ps", "-axo", "pid=,pgid=,uid=,stat="], env=os.environ),
             capture_output=True,
             text=True,
             check=False,
@@ -240,89 +308,112 @@ def run_owned(command, timeout, evidence=None, label="process"):
             output_dir / (label + ".stderr"),
         )
         timed_out = False
-        with out_path.open("wb") as stdout, err_path.open("wb") as stderr:
-            process = subprocess.Popen(
-                command, stdout=stdout, stderr=stderr, start_new_session=True
-            )
-            deadline = time.monotonic() + timeout
-            execution_error = None
-            cleanup_error = None
-            try:
-                while not os.waitid(
-                    os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
-                ):
-                    if time.monotonic() >= deadline:
-                        timed_out = True
-                        break
-                    time.sleep(0.05)
-                group_members(process.pid)
-            except (
-                OSError,
-                RuntimeError,
-                subprocess.SubprocessError,
-                ValueError,
-            ) as exc:
-                execution_error = exc
-            finally:
-                members = None
+        cleanup_error = None
+        try:
+            with out_path.open("wb") as stdout, err_path.open("wb") as stderr:
+                actual = owned_exec.command(command, env=os.environ)
+                process = subprocess.Popen(
+                    actual,
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=True,
+                    env=dict(os.environ),
+                )
+                deadline = time.monotonic() + timeout
+                execution_error = None
+                cleanup_error = None
                 try:
-                    members = group_members(process.pid)
-                    if any(uid != os.getuid() for _, uid in members):
-                        members = []
-                        raise RuntimeError("Process group contains an unowned process")
-                except (
-                    OSError,
-                    RuntimeError,
-                    subprocess.SubprocessError,
-                    ValueError,
-                ) as exc:
-                    cleanup_error = exc
-                try:
-                    # This leader is unreaped, so the group id is pinned to this launch.
-                    if members is None or members:
-                        os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                except OSError as exc:
-                    cleanup_error = cleanup_error or exc
-                try:
-                    remaining = group_members(process.pid)
-                    cleanup_deadline = time.monotonic() + 3
-                    while remaining and time.monotonic() < cleanup_deadline:
+                    while not os.waitid(
+                        os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+                    ):
+                        if time.monotonic() >= deadline:
+                            timed_out = True
+                            break
                         time.sleep(0.05)
-                        remaining = group_members(process.pid)
-                    if remaining:
-                        raise RuntimeError("Owned processes remain after cleanup")
+                    group_members(process.pid)
                 except (
                     OSError,
                     RuntimeError,
                     subprocess.SubprocessError,
                     ValueError,
                 ) as exc:
-                    cleanup_error = cleanup_error or exc
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired as exc:
-                    cleanup_error = cleanup_error or exc
-        out, err = out_path.read_bytes(), err_path.read_bytes()
-        if evidence is not None:
-            atomic_json(
-                output_dir / (label + ".groups.json"), {"observations": observations}
-            )
-            atomic_json(
-                output_dir / (label + ".json"),
-                {
-                    "command": command,
-                    "started": started,
-                    "finished": datetime.now(UTC).isoformat(),
-                    "returncode": process.returncode,
-                    "timeout": timed_out,
-                    "execution_error": repr(execution_error)
-                    if execution_error
-                    else None,
-                    "cleanup_error": repr(cleanup_error) if cleanup_error else None,
-                },
-            )
+                    execution_error = exc
+                finally:
+                    members = None
+                    try:
+                        members = group_members(process.pid)
+                        if any(uid != os.getuid() for _, uid in members):
+                            members = []
+                            raise RuntimeError(
+                                "Process group contains an unowned process"
+                            )
+                    except (
+                        OSError,
+                        RuntimeError,
+                        subprocess.SubprocessError,
+                        ValueError,
+                    ) as exc:
+                        cleanup_error = exc
+                    try:
+                        # This leader is unreaped, so the group id is pinned to this launch.
+                        if members is None or members:
+                            os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as exc:
+                        cleanup_error = cleanup_error or exc
+                    try:
+                        remaining = group_members(process.pid)
+                        cleanup_deadline = time.monotonic() + 3
+                        while remaining and time.monotonic() < cleanup_deadline:
+                            time.sleep(0.05)
+                            remaining = group_members(process.pid)
+                        if remaining:
+                            raise RuntimeError("Owned processes remain after cleanup")
+                    except (
+                        OSError,
+                        RuntimeError,
+                        subprocess.SubprocessError,
+                        ValueError,
+                    ) as exc:
+                        cleanup_error = cleanup_error or exc
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired as exc:
+                        cleanup_error = cleanup_error or exc
+        except BaseException as evidence_error:
+            if cleanup_error is not None:
+                raise CleanupUnverified(
+                    f"Process cleanup failed: {cleanup_error}; evidence failed: {evidence_error}"
+                ) from cleanup_error
+            raise
+        try:
+            out, err = out_path.read_bytes(), err_path.read_bytes()
+            if evidence is not None:
+                atomic_json(
+                    output_dir / (label + ".groups.json"),
+                    {"observations": observations},
+                )
+                atomic_json(
+                    output_dir / (label + ".json"),
+                    {
+                        "command": command,
+                        "started": started,
+                        "finished": datetime.now(UTC).isoformat(),
+                        "returncode": process.returncode,
+                        "timeout": timed_out,
+                        "execution_error": repr(execution_error)
+                        if execution_error
+                        else None,
+                        "cleanup_error": repr(cleanup_error) if cleanup_error else None,
+                    },
+                )
+        except BaseException as evidence_error:
+            if cleanup_error is not None:
+                raise CleanupUnverified(
+                    f"Process cleanup failed: {cleanup_error}; evidence failed: {evidence_error}"
+                ) from cleanup_error
+            raise
         if cleanup_error is not None:
             raise CleanupUnverified(
                 f"Process cleanup failed: {cleanup_error}"
@@ -340,15 +431,155 @@ def run_owned(command, timeout, evidence=None, label="process"):
         return out.decode(errors="replace")
 
 
+def run_with_browser(command, profile, task, evidence):
+    """Own a registered browser group while a bounded CDP client uses it."""
+    import signal
+    import subprocess
+    import threading
+    import time
+    from datetime import datetime
+
+    actual = owned_exec.command(command, env=os.environ)
+    started = datetime.now(UTC).isoformat()
+    known, sampling_errors = {}, []
+    identity = None
+    execution_error = None
+    cleanup_error = None
+    stop = threading.Event()
+    try:
+        with (
+            (evidence / "browser-process.stdout").open("wb") as stdout,
+            (evidence / "browser-process.stderr").open("wb") as stderr,
+        ):
+            process = subprocess.Popen(
+                actual,
+                stdout=stdout,
+                stderr=stderr,
+                start_new_session=True,
+                env=dict(os.environ),
+            )
+            sampler = None
+            try:
+                identity = processes.inspect(process.pid)
+                if (
+                    identity is None
+                    or identity["pid"] != process.pid
+                    or identity["pgid"] != process.pid
+                ):
+                    raise CleanupUnverified("Browser identity could not be established")
+                known[process.pid] = identity
+                groups = {process.pid: identity["birth"]}
+
+                def sample():
+                    while not stop.wait(0.1):
+                        try:
+                            known.update(processes.members(groups, known))
+                        except BaseException as exc:  # noqa: BLE001 - retain uncertain cleanup
+                            sampling_errors.append(repr(exc))
+                            stop.set()
+
+                sampler = threading.Thread(target=sample, daemon=True)
+                sampler.start()
+                active = profile / "DevToolsActivePort"
+                deadline = time.monotonic() + 15
+                while not active.is_file():
+                    if (
+                        os.waitid(
+                            os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+                        )
+                        or sampling_errors
+                    ):
+                        raise RuntimeError(
+                            "Browser exited or ownership sampling failed"
+                        )
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Browser startup timed out")
+                    time.sleep(0.05)
+                port = int(active.read_text().splitlines()[0])
+                task(port)
+            except BaseException as exc:  # noqa: BLE001 - cleanup must run on interruption
+                execution_error = exc
+            finally:
+                stop.set()
+                if sampler is not None:
+                    sampler.join()
+                try:
+                    if identity is None:
+                        # The unreaped leader pins this process group even without a census.
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        raise CleanupUnverified(
+                            "Browser identity could not be established"
+                        )
+                    processes.cleanup({process.pid: identity["birth"]}, known=known)
+                    if sampling_errors:
+                        raise CleanupUnverified(
+                            "Browser ownership sampling failed: "
+                            + "; ".join(sampling_errors)
+                        )
+                except BaseException as exc:  # noqa: BLE001 - preserve failed ownership proof
+                    cleanup_error = exc
+                    try:
+                        if (
+                            identity is not None
+                            and processes.birth(process.pid) == identity["birth"]
+                            and os.getpgid(process.pid) == process.pid
+                        ):
+                            os.killpg(process.pid, signal.SIGKILL)
+                    except OSError, ValueError, subprocess.SubprocessError:
+                        pass
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired as exc:
+                    cleanup_error = cleanup_error or exc
+    except BaseException as evidence_error:
+        if cleanup_error is not None:
+            raise CleanupUnverified(
+                f"Browser cleanup failed: {cleanup_error}; evidence failed: {evidence_error}"
+            ) from cleanup_error
+        raise
+    try:
+        atomic_json(
+            evidence / "browser-process.json",
+            {
+                "command": command,
+                "actual_command": actual,
+                "started": started,
+                "finished": datetime.now(UTC).isoformat(),
+                "pid": process.pid,
+                "identity": identity,
+                "known": list(known.values()),
+                "sampling_errors": sampling_errors,
+                "returncode": process.returncode,
+                "execution_error": repr(execution_error) if execution_error else None,
+                "cleanup_error": repr(cleanup_error) if cleanup_error else None,
+            },
+        )
+    except BaseException as evidence_error:
+        if cleanup_error is not None:
+            raise CleanupUnverified(
+                f"Browser cleanup failed: {cleanup_error}; evidence failed: {evidence_error}"
+            ) from cleanup_error
+        raise
+    if cleanup_error is not None:
+        raise CleanupUnverified(
+            "Browser cleanup could not be verified: " + str(cleanup_error)
+        ) from cleanup_error
+    if execution_error is not None:
+        raise execution_error
+
+
 def share_runtime(root, wasm):
     cache = inside(root, ".godot-review-runtime")
     cache.mkdir(exist_ok=True)
-    fingerprint = digest(wasm)
+    fingerprint = digest(wasm, ARTIFACT_LIMIT)
     target = cache / (fingerprint + ".wasm")
     try:
         os.link(wasm, target)
     except FileExistsError:
-        if not target.is_file() or digest(target) != fingerprint:
+        if not target.is_file() or digest(target, ARTIFACT_LIMIT) != fingerprint:
             raise ValueError("Shared runtime cache changed")
     replacement = wasm.with_suffix(".shared")
     os.link(target, replacement)
@@ -359,7 +590,7 @@ def capture(root, directory):
     import fcntl
 
     dest = inside(root, directory)
-    inspect(root, directory)
+    inspect(root, directory, include_status=False)
     fd = os.open(
         dest / ".capture.lock",
         os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
@@ -373,6 +604,15 @@ def capture(root, directory):
         marker = dest / ".capture.pending"
         if marker.exists():
             raise CleanupUnverified("Previous capture cleanup is unverified")
+        required = (
+            "CAVI_GODOT_BIN",
+            "CAVI_GODOT_WEB_TEMPLATE",
+            "CAVI_CHROMIUM_BIN",
+            "CAVI_NODE_BIN",
+        )
+        missing = [name for name in required if not os.environ.get(name)]
+        if missing:
+            raise ValueError("Missing review configuration: " + ", ".join(missing))
         atomic_json(marker, {"kind": "capture_pending"})
         verified = False
         try:
@@ -381,9 +621,9 @@ def capture(root, directory):
             return result
         except CleanupUnverified:
             raise
-        except Exception:
+        except Exception as exc:
             verified = True
-            raise
+            raise OperationUnknown(str(exc)) from exc
         finally:
             if verified:
                 marker.unlink()
@@ -397,7 +637,7 @@ def capture_locked(root, directory):
     import socketserver
     import threading
 
-    receipt = inspect(root, directory)
+    receipt = inspect(root, directory, include_status=False)
     dest = inside(root, directory)
     if receipt["state"] != "prepared":
         raise ValueError("Review is not prepared")
@@ -440,7 +680,7 @@ def capture_locked(root, directory):
             )
         )
         shutil.copyfile(inside(root, receipt["source"]), project / "subject.glb")
-        if digest(project / "subject.glb") != inputs["source_sha256"]:
+        if digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]:
             raise ValueError("Copied source changed")
         for filename in ("project.godot", "main.tscn"):
             if digest(project / filename) != inputs["provider"]["runtime"][filename]:
@@ -514,24 +754,38 @@ def capture_locked(root, directory):
             thread.start()
             try:
                 url = f"http://127.0.0.1:{server.server_address[1]}/index.html"
-                run_owned(
-                    [
-                        str(tools["CAVI_NODE_BIN"]),
-                        str(runtime / "capture.mjs"),
-                        str(tools["CAVI_CHROMIUM_BIN"]),
-                        url,
-                        str(export / "capture.png"),
-                        str(Path(temp) / "browser"),
-                    ],
-                    90,
-                    evidence,
-                    "browser",
-                )
+                profile = Path(temp) / "browser"
+                command = [
+                    str(tools["CAVI_CHROMIUM_BIN"]),
+                    "--headless",
+                    "--use-angle=swiftshader",
+                    "--enable-unsafe-swiftshader",
+                    "--remote-debugging-port=0",
+                    "--user-data-dir=" + str(profile),
+                    "--window-size=1024,768",
+                    "about:blank",
+                ]
+
+                def client(port):
+                    run_owned(
+                        [
+                            str(tools["CAVI_NODE_BIN"]),
+                            str(runtime / "capture.mjs"),
+                            str(port),
+                            url,
+                            str(export / "capture.png"),
+                        ],
+                        90,
+                        evidence,
+                        "browser",
+                    )
+
+                run_with_browser(command, profile, client, evidence)
             finally:
                 server.shutdown()
                 thread.join()
         godot_version = run_owned([godot, "--version"], 10, evidence, "version").strip()
-        inspect(root, directory)
+        inspect(root, directory, include_status=False)
         if input_snapshot(root, receipt, tools) != inputs:
             raise ValueError("Review input changed during capture")
         share_runtime(root, export / "index.wasm")
@@ -551,9 +805,11 @@ def capture_locked(root, directory):
         receipt["bundle"] = str(bundle.relative_to(dest))
         receipt["godot_version"] = godot_version
         receipt["renderer"] = "godot-web-compatibility-webgl2"
-        receipt["scene"] = json.loads((export / "capture.png.json").read_text())
+        receipt["scene"] = files.load_json(export / "capture.png.json")
         receipt["artifacts"] = {
-            str((bundle / path.relative_to(export)).relative_to(dest)): digest(path)
+            str((bundle / path.relative_to(export)).relative_to(dest)): digest(
+                path, ARTIFACT_LIMIT
+            )
             for path in export.rglob("*")
             if path.is_file()
         }
@@ -561,7 +817,7 @@ def capture_locked(root, directory):
             shutil.copyfile(project / filename, evidence / filename)
         receipt["artifacts"].update(
             {
-                str(path.relative_to(dest)): digest(path)
+                str(path.relative_to(dest)): digest(path, ARTIFACT_LIMIT)
                 for path in evidence.iterdir()
                 if path.is_file()
             }

@@ -1,0 +1,141 @@
+[
+  {
+    "id": "status",
+    "tool": "godot_status",
+    "arguments": {},
+    "kind": "success"
+  },
+  {
+    "id": "status-extra",
+    "tool": "godot_status",
+    "arguments": {
+      "unexpected": true
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "prepare",
+    "tool": "godot_review_prepare",
+    "arguments": {
+      "source": "asset.glb",
+      "directory": "review",
+      "view": "front"
+    },
+    "kind": "success"
+  },
+  {
+    "id": "prepare-extra",
+    "tool": "godot_review_prepare",
+    "arguments": {
+      "source": "asset.glb",
+      "directory": "extra",
+      "view": "front",
+      "unexpected": true
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "prepare-missing",
+    "tool": "godot_review_prepare",
+    "arguments": {},
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "prepare-view",
+    "tool": "godot_review_prepare",
+    "arguments": {
+      "source": "asset.glb",
+      "directory": "bad",
+      "view": "unknown"
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "prepare-escape",
+    "tool": "godot_review_prepare",
+    "arguments": {
+      "source": "../outside.glb",
+      "directory": "bad",
+      "view": "front"
+    },
+    "kind": "safety",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "inspect",
+    "tool": "godot_review_inspect",
+    "arguments": {
+      "directory": "review"
+    },
+    "kind": "success"
+  },
+  {
+    "id": "inspect-extra",
+    "tool": "godot_review_inspect",
+    "arguments": {
+      "directory": "review",
+      "unexpected": true
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "capture-extra",
+    "tool": "godot_review_capture",
+    "arguments": {
+      "directory": "review",
+      "unexpected": true
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "capture-unconfigured",
+    "tool": "godot_review_capture",
+    "arguments": {
+      "directory": "review"
+    },
+    "kind": "safety",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "capture-missing",
+    "tool": "godot_review_capture",
+    "arguments": {},
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "capture-pending",
+    "tool": "godot_review_capture",
+    "arguments": {
+      "directory": "review"
+    },
+    "kind": "safety",
+    "setup": "pending",
+    "code": "CLEANUP_UNVERIFIED",
+    "outcome": "unknown"
+  },
+  {
+    "id": "inspect-pending",
+    "tool": "godot_review_inspect",
+    "arguments": {
+      "directory": "review"
+    },
+    "kind": "success",
+    "pending": true
+  }
+]

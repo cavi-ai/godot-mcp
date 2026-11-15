@@ -37,6 +37,14 @@ Inspect static and animated GLB assets with Godot. Reports scene nodes, mesh and
 
 Inspection uses Godot’s headless runtime importer and does not require Chromium or Web export templates. Mesh-node bounds describe the imported rest pose; surface records report geometry, UV presence, and the material Godot uses. Animated capture remains separate from structural inspection. Call `godot_asset_inspect` with workspace-relative `source` and a new workspace-relative `directory`. Inputs are self-contained GLB 2.0 files up to 64 MiB. Reports cap node and surface records at 256, bone records at 256, and clip records at 128, with totals and truncation flags. If inspection fails, preserve its output directory and inspect the input receipt and process logs before retrying.
 
+## Inspect animation motion
+
+Use `godot_asset_inspect` to identify the player path and clip name. Call
+`godot_motion_inspect` with `source`, a new `directory`, `player`, `animation`,
+and 2–9 strictly increasing `normalized_times` between 0 and 1. Godot evaluates
+node and skeleton transforms at each time. Reports cap nodes and bones at 256
+each and use Godot scene units; they do not measure skinned surface deformation.
+
 ## Review an asset
 
 1. Place a self-contained static textured `.glb` in the workspace. Inputs are static GLB 2.0 files up to 64 MiB with embedded PNG or JPEG textures; skins and animations are rejected.

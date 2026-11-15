@@ -179,5 +179,13 @@
     "kind": "safety",
     "code": "INVALID_ARGUMENT",
     "outcome": "rejected"
+  },
+  {
+    "id": "motion-missing",
+    "tool": "godot_motion_inspect",
+    "arguments": {},
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
   }
 ]

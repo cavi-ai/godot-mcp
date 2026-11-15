@@ -46,6 +46,7 @@ async def exercise(env):
         expected = {
             "godot_status",
             "godot_asset_inspect",
+            "godot_motion_inspect",
             "godot_review_prepare",
             "godot_review_inspect",
             "godot_review_capture",

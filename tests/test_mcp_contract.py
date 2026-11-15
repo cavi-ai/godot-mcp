@@ -41,6 +41,7 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                     {
                         "godot_status",
                         "godot_asset_inspect",
+                        "godot_motion_inspect",
                         "godot_review_prepare",
                         "godot_review_inspect",
                         "godot_review_capture",
@@ -71,6 +72,27 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                         {"source": "asset.glb", "directory": "out", "surprise": True},
                     ),
                     ("godot_asset_inspect", {}),
+                    ("godot_motion_inspect", {}),
+                    (
+                        "godot_motion_inspect",
+                        {
+                            "source": "asset.glb",
+                            "directory": "bad",
+                            "player": "/p",
+                            "animation": "walk",
+                            "normalized_times": [0, True],
+                        },
+                    ),
+                    (
+                        "godot_motion_inspect",
+                        {
+                            "source": "asset.glb",
+                            "directory": "bad",
+                            "player": "/p",
+                            "animation": "walk",
+                            "normalized_times": [0, 0],
+                        },
+                    ),
                     (
                         "godot_asset_inspect",
                         {"source": "../outside.glb", "directory": "out"},

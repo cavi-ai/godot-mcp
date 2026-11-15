@@ -3,14 +3,15 @@
 import os
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import anyio
 from cavi_mcp_core.contracts import failure
 from cavi_mcp_core.server import READ_ONLY, Server
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
-from . import inspection, review
+from . import inspection, motion, review
 
 
 class GodotServer(Server):
@@ -80,6 +81,29 @@ async def godot_review_capture(directory: str) -> dict[str, Any]:
 async def godot_asset_inspect(source: str, directory: str) -> dict[str, Any]:
     """Inspect a self-contained GLB with Godot and save a source-bound scene report."""
     return await call(inspection.inspect_asset, workspace(), source, directory)
+
+
+@mcp.tool(annotations=WRITES)
+async def godot_motion_inspect(
+    source: str,
+    directory: str,
+    player: str,
+    animation: str,
+    normalized_times: Annotated[
+        list[Annotated[float, Field(strict=True, allow_inf_nan=False, ge=0, le=1)]],
+        Field(min_length=2, max_length=9),
+    ],
+) -> dict[str, Any]:
+    """Sample a named GLB animation and save engine-evaluated transforms."""
+    return await call(
+        motion.inspect_motion,
+        workspace(),
+        source,
+        directory,
+        player,
+        animation,
+        normalized_times,
+    )
 
 
 def main():

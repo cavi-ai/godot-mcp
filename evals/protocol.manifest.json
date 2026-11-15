@@ -1,7 +1,7 @@
 {
   "version": 1,
   "probes": [
-    {"id": "discovery", "probe": "discovery-cost", "access": "read_only", "max_tools": 5, "max_schema_bytes": 20000},
+    {"id": "discovery", "probe": "discovery-cost", "access": "read_only", "max_tools": 6, "max_schema_bytes": 20000},
     {"id": "tokens", "probe": "token-cost", "access": "read_only", "max_total_tokens": 5000, "max_tool_tokens": 2000},
     {"id": "pagination", "probe": "pagination", "access": "read_only", "max_pages": 2},
     {"id": "surfaces", "probe": "surface-listing", "access": "read_only", "max_pages": 2},

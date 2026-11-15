@@ -73,6 +73,32 @@ class MotionRequestTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 motion.validate_report(bad, "/p", "walk", [0, 1])
 
+    def test_fractional_sample_identity_remains_exact(self):
+        transform = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
+        sample = {
+            "normalized_time": 1 / 3,
+            "seconds": 1 / 3,
+            "nodes": [{"local_transform": transform, "world_transform": transform}],
+            "bones": [],
+        }
+        report = {
+            "status": "ok",
+            "player": "/p",
+            "animation": "clip",
+            "duration": 1,
+            "loop_mode": 0,
+            "godot_version": {},
+            "units": "Godot scene units",
+            "bone_space": "skeleton relative and Godot world",
+            "nodes": [{"path": "/n", "type": "Node3D"}],
+            "bones": [],
+            "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
+        }
+        motion.validate_report(report, "/p", "clip", [1 / 3, 1])
+        report["samples"][0] = {**sample, "normalized_time": 0.333333333333333}
+        with self.assertRaises(ValueError):
+            motion.validate_report(report, "/p", "clip", [1 / 3, 1])
+
     def test_bone_inventory_must_be_complete_and_unique(self):
         t = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
         pose = {"skeleton_transform": t, "world_transform": t}

@@ -98,7 +98,7 @@ func run() -> void:
     if file == null:
         fail("Could not write motion report")
         return
-    file.store_string(JSON.stringify(report))
+    file.store_string(JSON.stringify(report, "", true, true))
     file.close()
     scene.free()
     quit(0)

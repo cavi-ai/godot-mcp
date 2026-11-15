@@ -12,6 +12,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import inspection, motion, review
+from .pose import Pose
 
 
 class GodotServer(Server):
@@ -60,9 +61,17 @@ async def godot_review_prepare(
     source: str,
     directory: str,
     view: Literal["front", "three-quarter", "side"] = "three-quarter",
+    pose: Pose | None = None,
 ) -> dict[str, Any]:
-    """Prepare a new owned static GLB review in the workspace."""
-    return await call(review.prepare, workspace(), source, directory, view)
+    """Prepare a GLB review, optionally at a selected animation pose."""
+    return await call(
+        review.prepare,
+        workspace(),
+        source,
+        directory,
+        view,
+        pose.model_dump() if pose is not None else None,
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)

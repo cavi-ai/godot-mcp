@@ -187,5 +187,38 @@
     "kind": "invalid",
     "code": "INVALID_ARGUMENT",
     "outcome": "rejected"
+  },
+  {
+    "id": "prepare-pose-bool",
+    "tool": "godot_review_prepare",
+    "arguments": {
+      "source": "asset.glb",
+      "directory": "bad-pose",
+      "pose": {
+        "player": "/p",
+        "animation": "walk",
+        "time_seconds": true
+      }
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
+  },
+  {
+    "id": "prepare-pose-extra",
+    "tool": "godot_review_prepare",
+    "arguments": {
+      "source": "asset.glb",
+      "directory": "bad-pose",
+      "pose": {
+        "player": "/p",
+        "animation": "walk",
+        "time_seconds": 1,
+        "extra": 1
+      }
+    },
+    "kind": "invalid",
+    "code": "INVALID_ARGUMENT",
+    "outcome": "rejected"
   }
 ]

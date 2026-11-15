@@ -52,6 +52,17 @@ each and use Godot scene units; they do not measure skinned surface deformation.
 3. Call `godot_review_capture` with the review directory. It imports and exports with Godot, captures a rendered frame in headless Chromium, and records its inputs and process evidence.
 4. Call `godot_review_inspect` to check the source, tool and artifact hashes and inspect pending cleanup and the latest attempt. Open the capture for visual review. Review inspection limits receipt metadata to 1 MiB and individual artifacts to 256 MiB.
 
+To capture an animation pose, inspect the GLB first and pass `pose` to
+`godot_review_prepare`, using the reported player path and animation name:
+
+```json
+{"player": "/subject/AnimationPlayer", "animation": "Walk", "time_seconds": 1.0}
+```
+
+The selected time is evaluated by Godot and recorded with the captured scene.
+Pose review accepts self-contained animated GLB assets and does not establish
+Unity appearance or gameplay behavior.
+
 To use the interactive view, serve the receipt's relative `bundle` within the review directory:
 
 ```sh

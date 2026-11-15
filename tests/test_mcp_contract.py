@@ -113,6 +113,31 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                     ("godot_review_prepare", {}),
                     (
                         "godot_review_prepare",
+                        {
+                            "source": "asset.glb",
+                            "directory": "bad-pose",
+                            "pose": {
+                                "player": "/p",
+                                "animation": "walk",
+                                "time_seconds": True,
+                            },
+                        },
+                    ),
+                    (
+                        "godot_review_prepare",
+                        {
+                            "source": "asset.glb",
+                            "directory": "bad-pose",
+                            "pose": {
+                                "player": "/p",
+                                "animation": "walk",
+                                "time_seconds": 1,
+                                "extra": 1,
+                            },
+                        },
+                    ),
+                    (
+                        "godot_review_prepare",
                         {"source": "asset.glb", "directory": "bad", "view": "wrong"},
                     ),
                     (

@@ -1,0 +1,157 @@
+import math
+import tempfile
+import unittest
+from pathlib import Path
+
+from test_support import glb
+
+from godot_mcp import review
+
+
+class PoseReviewTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        (self.root / "animated.glb").write_bytes(
+            glb({"animations": [{}], "skins": [{}]})
+        )
+        self.pose = {
+            "player": "/subject/AnimationPlayer",
+            "animation": "Walk",
+            "time_seconds": 1.25,
+        }
+
+    def test_animated_source_needs_explicit_valid_pose_and_is_sealed(self):
+        with self.assertRaises(ValueError):
+            review.prepare(self.root, "animated.glb", "static")
+        result = review.prepare(self.root, "animated.glb", "review", pose=self.pose)
+        self.assertEqual(result["pose"], self.pose)
+        self.assertEqual(review.inspect(self.root, "review")["pose"], self.pose)
+        owner = self.root / "review/owner.json"
+        data = owner.read_text().replace("Walk", "Other")
+        owner.write_text(data)
+        with self.assertRaisesRegex(ValueError, "ownership"):
+            review.inspect(self.root, "review")
+
+    def test_bad_pose_rejected_before_creating_directory(self):
+        for pose in (
+            {},
+            {**self.pose, "time_seconds": True},
+            {**self.pose, "time_seconds": math.nan},
+            {**self.pose, "unexpected": 1},
+            {**self.pose, "time_seconds": -1},
+        ):
+            with self.subTest(pose=pose), self.assertRaises(ValueError):
+                review.prepare(self.root, "animated.glb", "bad", pose=pose)
+            self.assertFalse((self.root / "bad").exists())
+
+    def test_pose_metadata_must_match_actual_scene(self):
+        metadata = {
+            "player": self.pose["player"],
+            "animation": "Walk",
+            "time_seconds": 1.25,
+            "duration": 2.0,
+            "bone_count": 1,
+            "bones": [
+                {
+                    "name": "root",
+                    "skeleton": "/subject/Skeleton",
+                    "index": 0,
+                    "origin": [0, 0, 0],
+                    "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                }
+            ],
+        }
+        review.validate_pose_scene(self.pose, metadata)
+        for bad in (
+            {**metadata, "animation": "Other"},
+            {**metadata, "time_seconds": 1.5},
+            {**metadata, "time_seconds": -0.000001},
+            {**metadata, "bones": [{**metadata["bones"][0], "index": -1}]},
+            {**metadata, "bones": [{**metadata["bones"][0], "skeleton": ""}]},
+            {**metadata, "bone_count": 2, "bones": metadata["bones"] * 2},
+            {**metadata, "bones": []},
+            {**metadata, "bones": [{"origin": [0, math.inf, 0]}]},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                review.validate_pose_scene(self.pose, bad)
+
+    def test_capture_seals_configuration_and_rejects_drift_or_wrong_pose(self):
+        import json
+        import os
+        from unittest.mock import patch
+
+        for problem in ("config", "scene", "source"):
+            with self.subTest(problem=problem), tempfile.TemporaryDirectory() as d:
+                root = Path(d).resolve()
+                (root / "animated.glb").write_bytes(glb({"animations": [{}]}))
+                review.prepare(root, "animated.glb", "review", pose=self.pose)
+                tool = root / "tool"
+                tool.write_text("tool")
+                env = {
+                    k: str(tool)
+                    for k in (
+                        "CAVI_GODOT_BIN",
+                        "CAVI_GODOT_WEB_TEMPLATE",
+                        "CAVI_CHROMIUM_BIN",
+                        "CAVI_NODE_BIN",
+                    )
+                }
+                checked = []
+
+                def fake_run(
+                    command, timeout, evidence, label, problem=problem, checked=checked
+                ):
+                    (evidence / (label + ".stderr")).write_text("")
+                    if label == "import":
+                        project = Path(command[command.index("--path") + 1])
+                        self.assertIn(
+                            'include_filter="pose.json"',
+                            (project / "export_presets.cfg").read_text(),
+                        )
+                        self.assertEqual(
+                            json.loads((project / "pose.json").read_text()), self.pose
+                        )
+                        checked.append(project)
+                    elif label == "export":
+                        Path(command[-1]).parent.joinpath("index.wasm").write_bytes(
+                            b"wasm"
+                        )
+                    elif label == "browser":
+                        output = Path(command[-1])
+                        output.write_bytes(b"png")
+                        metadata = {
+                            "player": self.pose["player"],
+                            "animation": "Other",
+                            "time_seconds": 1.25,
+                            "duration": 2,
+                            "bone_count": 0,
+                            "bones": [],
+                        }
+                        Path(str(output) + ".json").write_text(
+                            json.dumps({"pose": metadata})
+                        )
+                        if problem == "config":
+                            (checked[0] / "pose.json").write_text("{}")
+                        if problem == "source":
+                            (checked[0] / "subject.glb").write_bytes(b"changed")
+                    return "fixture"
+
+                with (
+                    patch.dict(os.environ, env),
+                    patch("importlib.metadata.version", return_value="fixture"),
+                    patch.object(review, "run_owned", side_effect=fake_run),
+                    patch.object(
+                        review,
+                        "run_with_browser",
+                        side_effect=lambda cmd, profile, task, evidence: task(1),
+                    ),
+                    self.assertRaisesRegex(
+                        Exception,
+                        "Pose configuration changed|Rendered pose does not match|Copied project changed",
+                    ),
+                ):
+                    review.capture(root, "review")
+                self.assertEqual(review.inspect(root, "review")["state"], "prepared")
+                self.assertTrue(checked)

@@ -139,13 +139,19 @@ def atomic_json(path, value):
     journal.write_json(path, value)
 
 
-def prepare(root, source, directory, view="three-quarter"):
+def prepare(root, source, directory, view="three-quarter", pose=None):
     if view not in ("front", "three-quarter", "side"):
         raise ValueError("Unsupported view")
     src, dest = inside(root, source), inside(root, directory)
     if not src.is_file() or src.suffix.lower() != ".glb":
         raise ValueError("Source must be a GLB file")
-    read_glb(src)
+    if pose is not None:
+        from .pose import Pose
+
+        pose = Pose.model_validate(pose).model_dump()
+    document = read_glb(src, static_review=pose is None)
+    if pose is not None and not document.get("animations"):
+        raise ValueError("Pose review requires an animated GLB")
     source_sha256 = digest(src, LIMIT)
     dest.mkdir(parents=False, exist_ok=False)
     receipt = {
@@ -156,12 +162,16 @@ def prepare(root, source, directory, view="three-quarter"):
         "view": view,
         "state": "prepared",
     }
+    if pose is not None:
+        receipt["pose"] = pose
     owner = {
         "kind": receipt["kind"],
         "source": source,
         "source_sha256": receipt["source_sha256"],
         "view": view,
     }
+    if pose is not None:
+        owner["pose"] = pose
     try:
         atomic_json(dest / "owner.json", owner)
         atomic_json(dest / "review.json", receipt)
@@ -192,6 +202,7 @@ def input_snapshot(root, receipt, tools):
     return {
         "source_sha256": source_hash,
         "view": receipt["view"],
+        **({"pose": receipt["pose"]} if "pose" in receipt else {}),
         "provider": provider_identity(),
         "tools": {name: digest(path) for name, path in tools.items()},
     }
@@ -221,8 +232,19 @@ def inspect(root, directory, include_status=True):
         key in receipt for key in ("kind", "source", "source_sha256", "view")
     ):
         raise ValueError("Invalid review ownership marker")
+    if "pose" in receipt:
+        from .pose import Pose
+
+        Pose.model_validate(receipt["pose"])
     if owner != {
-        key: receipt[key] for key in ("kind", "source", "source_sha256", "view")
+        key: receipt[key]
+        for key in (
+            "kind",
+            "source",
+            "source_sha256",
+            "view",
+            *(["pose"] if "pose" in receipt else []),
+        )
     }:
         raise ValueError("Review ownership marker changed")
     if digest(inside(root, receipt["source"]), LIMIT) != receipt["source_sha256"]:
@@ -251,6 +273,24 @@ def inspect(root, directory, include_status=True):
         path = (dest / relative).resolve()
         if not path.is_relative_to(dest) or digest(path, ARTIFACT_LIMIT) != expected:
             raise ValueError("Review artifact changed")
+    if receipt.get("state") == "captured" and "pose" in receipt:
+        bundle = receipt.get("bundle")
+        if not isinstance(bundle, str):
+            raise ValueError("Missing pose review bundle")
+        metadata = (dest / bundle / "capture.png.json").resolve()
+        if not metadata.is_relative_to(dest) or str(
+            metadata.relative_to(dest)
+        ) not in receipt.get("artifacts", {}):
+            raise ValueError("Missing captured pose evidence")
+        scene = files.load_json(metadata)
+        if not isinstance(scene, dict) or scene != receipt.get("scene"):
+            raise ValueError("Captured pose metadata changed")
+        validate_pose_scene(receipt["pose"], scene.get("pose"))
+        if (
+            not isinstance(scene.get("godot_version"), dict)
+            or type(scene["godot_version"].get("major")) is not int
+        ):
+            raise ValueError("Missing rendered Godot version")
     if include_status:
         receipt = dict(receipt)
         receipt["cleanup_pending"] = (dest / ".capture.pending").exists()
@@ -631,6 +671,12 @@ def capture(root, directory):
         os.close(fd)
 
 
+def validate_pose_scene(selection, scene):
+    from .pose import validate_scene
+
+    validate_scene(selection, scene)
+
+
 def capture_locked(root, directory):
     import http.server
     import shutil
@@ -662,6 +708,7 @@ def capture_locked(root, directory):
         {
             "source_sha256": receipt["source_sha256"],
             "view": receipt["view"],
+            **({"pose": receipt["pose"]} if "pose" in receipt else {}),
             "directory": directory,
         },
     )
@@ -672,13 +719,20 @@ def capture_locked(root, directory):
             shutil.copyfile(runtime / filename, project / filename)
         script = project / "main.gd"
         script.write_text(
-            script.read_text().replace(
+            script.read_text()
+            .replace(
                 "VIEW_YAW",
                 {"front": "0.0", "three-quarter": "0.65", "side": "1.5708"}[
                     receipt["view"]
                 ],
             )
+            .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
         )
+        if "pose" in receipt:
+            atomic_json(project / "pose.json", receipt["pose"])
+            pose_hash = digest(project / "pose.json")
+            if files.load_json(project / "pose.json") != receipt["pose"]:
+                raise ValueError("Copied pose configuration changed")
         shutil.copyfile(inside(root, receipt["source"]), project / "subject.glb")
         if digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]:
             raise ValueError("Copied source changed")
@@ -694,6 +748,7 @@ def capture_locked(root, directory):
                     receipt["view"]
                 ],
             )
+            .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
         )
         if (project / "main.gd").read_text() != expected_script or digest(
             runtime / "main.gd"
@@ -703,7 +758,9 @@ def capture_locked(root, directory):
         export.mkdir()
         preset = (
             '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\n'
-            'export_filter="all_resources"\ninclude_filter=""\nexclude_filter=""\n'
+            'export_filter="all_resources"\ninclude_filter='
+            + ('"pose.json"' if "pose" in receipt else '""')
+            + '\nexclude_filter=""\n'
             "[preset.0.options]\nvariant/thread_support=false\n"
             "custom_template/release="
             + json.dumps(str(tools["CAVI_GODOT_WEB_TEMPLATE"]))
@@ -785,9 +842,29 @@ def capture_locked(root, directory):
                 server.shutdown()
                 thread.join()
         godot_version = run_owned([godot, "--version"], 10, evidence, "version").strip()
+        if (
+            digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]
+            or (project / "main.gd").read_text() != expected_script
+        ):
+            raise ValueError("Copied project changed during capture")
+        if "pose" in receipt and (
+            digest(project / "pose.json") != pose_hash
+            or files.load_json(project / "pose.json") != receipt["pose"]
+        ):
+            raise ValueError("Pose configuration changed during capture")
         inspect(root, directory, include_status=False)
         if input_snapshot(root, receipt, tools) != inputs:
             raise ValueError("Review input changed during capture")
+        scene = files.load_json(export / "capture.png.json")
+        if not isinstance(scene, dict):
+            raise ValueError("Invalid captured scene metadata")  # noqa: TRY004
+        if "pose" in receipt:
+            validate_pose_scene(receipt["pose"], scene.get("pose"))
+            if (
+                not isinstance(scene.get("godot_version"), dict)
+                or type(scene["godot_version"].get("major")) is not int
+            ):
+                raise ValueError("Missing rendered Godot version")
         share_runtime(root, export / "index.wasm")
         bundle = evidence / "bundle"
         receipt["state"] = "captured"
@@ -805,7 +882,9 @@ def capture_locked(root, directory):
         receipt["bundle"] = str(bundle.relative_to(dest))
         receipt["godot_version"] = godot_version
         receipt["renderer"] = "godot-web-compatibility-webgl2"
-        receipt["scene"] = files.load_json(export / "capture.png.json")
+        receipt["scene"] = scene
+        if "pose" in receipt:
+            receipt["project"]["pose.json"] = pose_hash
         receipt["artifacts"] = {
             str((bundle / path.relative_to(export)).relative_to(dest)): digest(
                 path, ARTIFACT_LIMIT
@@ -813,7 +892,13 @@ def capture_locked(root, directory):
             for path in export.rglob("*")
             if path.is_file()
         }
-        for filename in ("project.godot", "main.gd", "main.tscn", "export_presets.cfg"):
+        for filename in (
+            "project.godot",
+            "main.gd",
+            "main.tscn",
+            "export_presets.cfg",
+            *(["pose.json"] if "pose" in receipt else []),
+        ):
             shutil.copyfile(project / filename, evidence / filename)
         receipt["artifacts"].update(
             {

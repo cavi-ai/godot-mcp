@@ -1,4 +1,5 @@
 extends Node3D
+const REQUIRE_POSE = POSE_ENABLED
 var camera: Camera3D
 var center: Vector3
 var radius := 2.0
@@ -10,6 +11,35 @@ var dragging := false
 func _ready():
  var model = load("res://subject.glb").instantiate()
  add_child(model)
+ var pose_metadata = null
+ var pose_points: Array[Vector3] = []
+ if REQUIRE_POSE:
+  if not FileAccess.file_exists("res://pose.json"):
+   push_error("Pose configuration missing")
+   return
+  var selected = JSON.parse_string(FileAccess.get_file_as_string("res://pose.json"))
+  if not selected is Dictionary:
+   push_error("Invalid pose configuration")
+   return
+  var selected_player = find_player(model, "", selected.player)
+  if selected_player == null or not selected_player.has_animation(selected.animation):
+   push_error("Animation player or clip not found")
+   return
+  var clip = selected_player.get_animation(selected.animation)
+  if selected.time_seconds < 0 or selected.time_seconds > clip.length:
+   push_error("Pose time outside clip")
+   return
+  selected_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+  selected_player.play(selected.animation)
+  selected_player.seek(float(selected.time_seconds), true, true)
+  selected_player.pause()
+  var bones = []
+  if not collect_pose(model, "", bones, pose_points):
+   push_error("Pose skeleton exceeds limit")
+   return
+  pose_metadata = {"player": selected.player, "animation": str(selected_player.assigned_animation),
+   "time_seconds": selected_player.current_animation_position, "duration": clip.length,
+   "bone_count": bones.size(), "bones": bones}
  var meshes: Array[MeshInstance3D] = []
  collect_meshes(model, meshes)
  if meshes.is_empty():
@@ -21,6 +51,18 @@ func _ready():
   var b = mesh.global_transform * mesh.get_aabb()
   bounds = b if first else bounds.merge(b)
   first = false
+ if REQUIRE_POSE and not pose_points.is_empty():
+  var pose_bounds = AABB(pose_points[0], Vector3.ZERO)
+  for point in pose_points:
+   pose_bounds = pose_bounds.expand(point)
+  var padding = 0.05
+  for mesh in meshes:
+   var mesh_bounds = mesh.global_transform * mesh.get_aabb()
+   if mesh.skin == null:
+    pose_bounds = pose_bounds.merge(mesh_bounds)
+   else:
+    padding = max(padding, mesh_bounds.size.length() * 0.2)
+  bounds = pose_bounds.grow(padding)
  center = bounds.get_center()
  radius = max(bounds.size.length() * 0.8, 0.1)
  initial_radius = radius
@@ -62,7 +104,10 @@ func _ready():
     "material": mat.resource_name if mat else "", "albedo_texture": texture_path})
  var metadata = {"mesh_nodes": meshes.size(), "material_surfaces": surfaces, "textured_surfaces": textures, "materials": materials,
   "bounds_origin": [bounds.position.x, bounds.position.y, bounds.position.z],
-  "bounds_size": [bounds.size.x, bounds.size.y, bounds.size.z], "units": "metres"}
+  "bounds_size": [bounds.size.x, bounds.size.y, bounds.size.z], "units": "metres",
+  "godot_version": Engine.get_version_info()}
+ if REQUIRE_POSE:
+  metadata["pose"] = pose_metadata
  var label = Label.new()
  label.text = "Drag to orbit · Scroll to zoom · R to reset | white bar = 1 m"
  var hud = CanvasLayer.new()
@@ -71,7 +116,36 @@ func _ready():
  await get_tree().process_frame
  await get_tree().process_frame
  if OS.has_feature("web"):
-  JavaScriptBridge.eval("window.godotReviewReady = " + JSON.stringify(metadata))
+  JavaScriptBridge.eval("window.godotReviewReady = " + JSON.stringify(metadata, "", true, true))
+
+func find_player(node: Node, parent_path: String, wanted: String) -> AnimationPlayer:
+ var path = parent_path + "/" + str(node.name)
+ if node is AnimationPlayer and path == wanted:
+  return node
+ for child in node.get_children():
+  var found = find_player(child, path, wanted)
+  if found != null:
+   return found
+ return null
+
+func vector(v: Vector3) -> Array:
+ return [v.x, v.y, v.z]
+
+func collect_pose(node: Node, parent_path: String, bones: Array, points: Array[Vector3]) -> bool:
+ var path = parent_path + "/" + str(node.name)
+ if node is Skeleton3D:
+  if bones.size() + node.get_bone_count() > 256:
+   return false
+  node.force_update_all_bone_transforms()
+  for i in node.get_bone_count():
+   var t = node.global_transform * node.get_bone_global_pose(i)
+   points.append(t.origin)
+   bones.append({"skeleton": path, "index": i, "name": node.get_bone_name(i),
+    "origin": vector(t.origin), "basis": [vector(t.basis.x), vector(t.basis.y), vector(t.basis.z)]})
+ for child in node.get_children():
+  if not collect_pose(child, path, bones, points):
+   return false
+ return true
 
 func collect_meshes(node: Node, meshes: Array[MeshInstance3D]):
  if node is MeshInstance3D and node.mesh:

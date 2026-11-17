@@ -12,12 +12,10 @@ Try asking:
 
 ## Set up
 
-Native inspection and capture require macOS or Linux, Python 3.15 or newer, [uv](https://docs.astral.sh/uv/), a Godot editor and an existing workspace. From a source checkout:
+Native inspection and capture require macOS or Linux, Python 3.15 or newer, [uv](https://docs.astral.sh/uv/), a Godot editor and an existing workspace. Install the server:
 
 ```sh
-git clone https://github.com/cavi-ai/godot-mcp.git
-cd godot-mcp
-uv sync --locked
+uv tool install cavi-godot-mcp
 ```
 
 Configure your MCP client with the executable and absolute paths. Inspection needs only the workspace and Godot paths:
@@ -26,7 +24,7 @@ Configure your MCP client with the executable and absolute paths. Inspection nee
 {
   "mcpServers": {
     "godot": {
-      "command": "/absolute/path/to/godot-mcp/.venv/bin/cavi-godot-mcp",
+      "command": "cavi-godot-mcp",
       "env": {
         "CAVI_GAME_ART_WORKSPACE": "/absolute/path/to/workspace",
         "CAVI_GODOT_BIN": "/absolute/path/to/godot"

@@ -41,7 +41,7 @@ To capture a rendered view, also set `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_B
 - Inspect a self-contained GLB for scene nodes, mesh surfaces, materials, UV presence, skeletons and clips.
 - Sample an animation's node and skeleton transforms at selected times.
 - Prepare and capture a static view, or capture one selected pose from an animated GLB. Open the capture for visual review.
-- Serve the exported review bundle locally to orbit and zoom a static asset; press R to reset. A white bar marks one metre.
+- Serve the exported review bundle locally to orbit and zoom; press R to reset the camera. A white bar marks one metre. Pose reviews open paused at the requested time. Play or pause the selected clip, scrub the timeline, or select Reset pose.
 
 <details>
 <summary>Operations, limits and recovery</summary>

@@ -7,6 +7,15 @@ var yaw := VIEW_YAW
 var pitch := 0.3
 var initial_radius: float
 var dragging := false
+var pose_player: AnimationPlayer
+var pose_player_path := ""
+var pose_animation := ""
+var initial_pose_time := 0.0
+var pose_duration := 0.0
+var play_button: Button
+var pose_slider: HSlider
+var pose_time_label: Label
+var playback_elapsed := 0.0
 
 func _ready():
  var model = load("res://subject.glb").instantiate()
@@ -33,6 +42,11 @@ func _ready():
   selected_player.play(selected.animation)
   selected_player.seek(float(selected.time_seconds), true, true)
   selected_player.pause()
+  pose_player = selected_player
+  pose_player_path = str(selected.player)
+  pose_animation = str(selected.animation)
+  initial_pose_time = float(selected.time_seconds)
+  pose_duration = clip.length
   var bones = []
   if not collect_pose(model, "", bones, pose_points):
    push_error("Pose skeleton exceeds limit")
@@ -113,10 +127,78 @@ func _ready():
  var hud = CanvasLayer.new()
  add_child(hud)
  hud.add_child(label)
+ if REQUIRE_POSE:
+  create_playback_controls(hud)
+  update_playback_controls()
+  publish_playback()
  await get_tree().process_frame
  await get_tree().process_frame
  if OS.has_feature("web"):
   JavaScriptBridge.eval("window.godotReviewReady = " + JSON.stringify(metadata, "", true, true))
+
+func create_playback_controls(hud: CanvasLayer):
+ var controls = HBoxContainer.new()
+ hud.add_child(controls)
+ controls.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+ controls.offset_top = 28
+ controls.offset_bottom = 68
+ controls.offset_left = 8
+ controls.offset_right = -8
+ play_button = Button.new()
+ play_button.custom_minimum_size.x = 72
+ play_button.pressed.connect(toggle_playback)
+ controls.add_child(play_button)
+ pose_slider = HSlider.new()
+ pose_slider.min_value = 0.0
+ pose_slider.max_value = pose_duration
+ pose_slider.step = 0.0
+ pose_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+ pose_slider.value_changed.connect(seek_pose)
+ controls.add_child(pose_slider)
+ pose_time_label = Label.new()
+ controls.add_child(pose_time_label)
+ var reset_button = Button.new()
+ reset_button.text = "Reset pose"
+ reset_button.pressed.connect(reset_pose)
+ controls.add_child(reset_button)
+
+func toggle_playback():
+ if pose_player.is_playing():
+  pose_player.pause()
+ else:
+  pose_player.play(pose_animation)
+ update_playback_controls()
+ publish_playback()
+
+func seek_pose(seconds: float):
+ pose_player.pause()
+ pose_player.seek(seconds, true, true)
+ update_playback_controls()
+ publish_playback()
+
+func reset_pose():
+ seek_pose(initial_pose_time)
+
+func update_playback_controls():
+ play_button.text = "Pause" if pose_player.is_playing() else "Play"
+ pose_slider.set_value_no_signal(pose_player.current_animation_position)
+ pose_time_label.text = "%.2f / %.2f s" % [pose_player.current_animation_position, pose_duration]
+
+func publish_playback():
+ if OS.has_feature("web"):
+  var state = {"player": pose_player_path, "animation": str(pose_player.assigned_animation),
+   "time_seconds": pose_player.current_animation_position, "duration": pose_duration,
+   "is_playing": pose_player.is_playing()}
+  JavaScriptBridge.eval("window.godotReviewPlayback = " + JSON.stringify(state, "", true, true))
+ playback_elapsed = 0.0
+
+func _process(delta: float):
+ if pose_player != null and pose_player.is_playing():
+  pose_player.advance(delta)
+  update_playback_controls()
+  playback_elapsed += delta
+  if playback_elapsed >= 0.2 or not pose_player.is_playing():
+   publish_playback()
 
 func find_player(node: Node, parent_path: String, wanted: String) -> AnimationPlayer:
  var path = parent_path + "/" + str(node.name)
@@ -157,7 +239,7 @@ func update_camera():
  camera.position = center + Vector3(sin(yaw)*cos(pitch), sin(pitch), cos(yaw)*cos(pitch)) * radius * 1.75
  camera.look_at(center)
 
-func _input(event):
+func _unhandled_input(event):
  if event is InputEventMouseButton:
   if event.button_index == MOUSE_BUTTON_LEFT:
    dragging = event.pressed
@@ -167,7 +249,7 @@ func _input(event):
   if event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
    radius *= 1.1
    update_camera()
- if event is InputEventMouseMotion and dragging:
+ if event is InputEventMouseMotion and dragging and event.button_mask & MOUSE_BUTTON_MASK_LEFT:
   yaw -= event.relative.x * 0.01
   pitch = clamp(pitch + event.relative.y * 0.01, -1.3, 1.3)
   update_camera()

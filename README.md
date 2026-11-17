@@ -1,16 +1,26 @@
 # Cavi Godot MCP
 
-Inspect static and animated GLB assets with Godot, then review static models in an interactive Web scene. The server runs locally over MCP stdio.
+![A frog king on a turntable, inspected by an otter curator](assets/godot-mcp-hero.png)
 
-## Install
+## Take it for a spin.
 
-Requires Python 3.15 or newer and `uv`. In a source checkout:
+See your GLB as Godot imports it. Cavi Godot MCP helps your assistant inspect meshes, materials, skeletons and animation clips, then prepare a rendered view you can review together. Orbit a static asset or capture a selected animation pose without building a review scene by hand.
+
+Try asking:
+
+> Inspect my GLB in Godot. What meshes, materials and animation clips did it import? Prepare a three-quarter view so I can look it over.
+
+## Set up
+
+Native inspection and capture require macOS or Linux, Python 3.15 or newer, [uv](https://docs.astral.sh/uv/), a Godot editor and an existing workspace. From a source checkout:
 
 ```sh
+git clone https://github.com/cavi-ai/godot-mcp.git
+cd godot-mcp
 uv sync --locked
 ```
 
-The command is `.venv/bin/cavi-godot-mcp`. Configure an MCP client with that executable and these environment variables:
+Configure your MCP client with the executable and absolute paths. Inspection needs only the workspace and Godot paths:
 
 ```json
 {
@@ -19,58 +29,47 @@ The command is `.venv/bin/cavi-godot-mcp`. Configure an MCP client with that exe
       "command": "/absolute/path/to/godot-mcp/.venv/bin/cavi-godot-mcp",
       "env": {
         "CAVI_GAME_ART_WORKSPACE": "/absolute/path/to/workspace",
-        "CAVI_GODOT_BIN": "/absolute/path/to/godot",
-        "CAVI_GODOT_WEB_TEMPLATE": "/absolute/path/to/web_nothreads_release.zip",
-        "CAVI_CHROMIUM_BIN": "/absolute/path/to/chrome-headless-shell",
-        "CAVI_NODE_BIN": "/absolute/path/to/node"
+        "CAVI_GODOT_BIN": "/absolute/path/to/godot"
       }
     }
   }
 }
 ```
 
-Native inspection and capture require macOS or Linux. `godot_asset_inspect` requires only `CAVI_GAME_ART_WORKSPACE` and `CAVI_GODOT_BIN`. Static captures also require the Web template, Chromium, and Node paths. Use a Godot editor and matching single-threaded Web export template, a headless Chromium with WebGL 2 support, and Node.js 22 or newer. The workspace must already exist. Tool discovery and `godot_status` do not launch these programs.
+To capture a rendered view, also set `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_BIN` and `CAVI_NODE_BIN` to absolute paths. Use a single-threaded Web export template matching your Godot editor, headless Chromium with WebGL 2 support, and Node.js 22 or newer.
 
-## Inspect an asset
+## Review your asset
 
-Inspect static and animated GLB assets with Godot. Reports scene nodes, mesh and material details, skeletons, and animation clips.
+- Inspect a self-contained GLB for scene nodes, mesh surfaces, materials, UV presence, skeletons and clips.
+- Sample an animation's node and skeleton transforms at selected times.
+- Prepare and capture a static view, or capture one selected pose from an animated GLB. Open the capture for visual review.
+- Serve the exported review bundle locally to orbit and zoom a static asset; press R to reset. A white bar marks one metre.
 
-Inspection uses Godot’s headless runtime importer and does not require Chromium or Web export templates. Mesh-node bounds describe the imported rest pose; surface records report geometry, UV presence, and the material Godot uses. Animated capture remains separate from structural inspection. Call `godot_asset_inspect` with workspace-relative `source` and a new workspace-relative `directory`. Inputs are self-contained GLB 2.0 files up to 64 MiB. Reports cap node and surface records at 256, bone records at 256, and clip records at 128, with totals and truncation flags. If inspection fails, preserve its output directory and inspect the input receipt and process logs before retrying.
+<details>
+<summary>Operations, limits and recovery</summary>
 
-## Inspect animation motion
+`godot_asset_inspect` takes a workspace-relative `source` and a new workspace-relative `directory`. It accepts self-contained GLB 2.0 files up to 64 MiB. Its mesh bounds describe the imported rest pose; reports include totals and truncation flags for capped records. Inspection uses Godot's headless runtime importer and does not require a browser or Web template.
 
-Use `godot_asset_inspect` to identify the player path and clip name. Call
-`godot_motion_inspect` with `source`, a new `directory`, `player`, `animation`,
-and 2–9 strictly increasing `normalized_times` between 0 and 1. Godot evaluates
-node and skeleton transforms at each time. Reports cap nodes and bones at 256
-each and use Godot scene units; they do not measure skinned surface deformation.
+For motion, use the inspection report's player path and clip name with `godot_motion_inspect`. Supply 2–9 strictly increasing `normalized_times` between 0 and 1. The result measures node and skeleton transforms, not skinned surface deformation.
 
-## Review an asset
+For a static review, `godot_review_prepare` takes the source, a new directory and `front`, `three-quarter` or `side` view. Static inputs cannot contain skins or animations; textures must be embedded PNG or JPEG. To review an animated asset, inspect it first and provide a selected `pose` with the reported player path, animation name and time in seconds. `godot_review_capture` produces a frame, and `godot_review_inspect` checks source, tool and artifact hashes and reports the latest attempt.
 
-1. Place a self-contained static textured `.glb` in the workspace. Inputs are static GLB 2.0 files up to 64 MiB with embedded PNG or JPEG textures; skins and animations are rejected.
-2. Call `godot_review_prepare` with its relative `source`, a new relative `directory`, and a `view` of `front`, `three-quarter`, or `side`.
-3. Call `godot_review_capture` with the review directory. It imports and exports with Godot, captures a rendered frame in headless Chromium, and records its inputs and process evidence.
-4. Call `godot_review_inspect` to check the source, tool and artifact hashes and inspect pending cleanup and the latest attempt. Open the capture for visual review. Review inspection limits receipt metadata to 1 MiB and individual artifacts to 256 MiB.
-
-To capture an animation pose, inspect the GLB first and pass `pose` to
-`godot_review_prepare`, using the reported player path and animation name:
-
-```json
-{"player": "/subject/AnimationPlayer", "animation": "Walk", "time_seconds": 1.0}
-```
-
-The selected time is evaluated by Godot and recorded with the captured scene.
-Pose review accepts self-contained animated GLB assets and does not establish
-Unity appearance or gameplay behavior.
-
-To use the interactive view, serve the receipt's relative `bundle` within the review directory:
+To open the interactive view, serve the receipt's relative `bundle` within the review directory:
 
 ```sh
 python3 -m http.server --bind 127.0.0.1 --directory <review-directory>/<bundle>
 ```
 
-Drag to orbit, scroll to zoom, and press R to reset. The white bar is one metre long. Stop the server after review.
+Stop the server after review. Godot's headless mode does not render; capture uses a Godot Web export with the Compatibility renderer and WebGL 2. The review does not establish gameplay, collision, traversal, room architecture or appearance in another engine. Perform final acceptance in the consuming engine.
 
-Godot's headless mode does not render; the capture uses a Godot Web export with the Compatibility renderer and WebGL 2. A prop-only input cannot establish room architecture, collision, or traversal. Godot appearance is not Unity toon appearance: perform final import, visual, and runtime acceptance in the consuming engine.
+If inspection fails, preserve its output directory and inspect the receipt and process logs before retrying. If a capture has an unknown outcome, use `godot_review_inspect` to examine the latest attempt. A pending cleanup marker blocks another capture; resolve the owned processes and output before removing it.
 
-If capture reports an unknown outcome, call `godot_review_inspect` and inspect the latest attempt's evidence. A pending cleanup marker blocks another capture; do not remove it until the owned processes and output have been resolved. Report security concerns privately as described in [SECURITY.md](SECURITY.md).
+</details>
+
+## Security
+
+The server runs locally over MCP stdio. Report security concerns privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

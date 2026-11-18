@@ -19,6 +19,34 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "embedded"):
                 prepare(root, "mesh.glb", "review")
 
+    def test_texture_free_static_drafts_prepare_and_inspect(self):
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            for name, attributes in (
+                ("plain", {"POSITION": 0}),
+                ("vertex-colour", {"POSITION": 0, "COLOR_0": 0}),
+            ):
+                source = root / f"{name}.glb"
+                source.write_bytes(
+                    glb(
+                        {
+                            "images": [],
+                            "textures": [],
+                            "materials": [{}],
+                            "meshes": [
+                                {
+                                    "primitives": [
+                                        {"attributes": attributes, "material": 0}
+                                    ]
+                                }
+                            ],
+                        }
+                    )
+                )
+                prepared = prepare(root, source.name, name)
+                self.assertEqual(prepared["source"], source.name)
+                self.assertEqual(inspect(root, name)["state"], "prepared")
+
     def test_changed_source_rejected(self):
         with TemporaryDirectory() as d:
             root = Path(d)

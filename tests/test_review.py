@@ -211,6 +211,62 @@ class ReviewTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "metadata changed"):
                     inspect(root, "review")
 
+    def test_geometry_preview_only_for_unadorned_triangles(self):
+        import copy
+
+        from godot_mcp.review import geometry_only, read_glb, validate_geometry_preview
+
+        with TemporaryDirectory() as d:
+            source = Path(d) / "geometry.glb"
+            source.write_bytes(
+                glb(
+                    {
+                        "images": [],
+                        "textures": [],
+                        "materials": [],
+                        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+                    }
+                )
+            )
+            original = read_glb(source)
+            self.assertTrue(geometry_only(original))
+            for change in (
+                "material",
+                "normal",
+                "color",
+                "mode",
+                "invalid",
+                "animation",
+                "texture",
+            ):
+                value = copy.deepcopy(original)
+                primitive = value["meshes"][0]["primitives"][0]
+                if change == "material":
+                    value["materials"] = [{}]
+                if change == "normal":
+                    primitive["attributes"]["NORMAL"] = 0
+                if change == "color":
+                    primitive["attributes"]["COLOR_0"] = 0
+                if change == "mode":
+                    primitive["mode"] = 1
+                if change == "invalid":
+                    primitive["attributes"]["POSITION"] = 999
+                if change == "animation":
+                    value["animations"] = [{}]
+                if change == "texture":
+                    value["textures"] = [{}]
+                with self.subTest(change=change):
+                    self.assertFalse(geometry_only(value))
+            validate_geometry_preview(
+                {"geometry_preview_surfaces": 1, "material_surfaces": 1}, True
+            )
+            validate_geometry_preview({"geometry_preview_surfaces": 0}, False)
+            for count, expected in ((0, True), (1, False), (None, True)):
+                with self.assertRaisesRegex(ValueError, "preview"):
+                    validate_geometry_preview(
+                        {"geometry_preview_surfaces": count}, expected
+                    )
+
     def test_changed_source_rejected(self):
         with TemporaryDirectory() as d:
             root = Path(d)
@@ -938,7 +994,7 @@ class OversizeSealTests(unittest.TestCase):
                     path = Path(command[-1])
                     path.write_bytes(b"png")
                     Path(str(path) + ".json").write_text(
-                        '{"camera_frame":{"center":[0,0,0],"distance":1}}'
+                        '{"camera_frame":{"center":[0,0,0],"distance":1},"geometry_preview_surfaces":0}'
                     )
                 return "fixture"
 

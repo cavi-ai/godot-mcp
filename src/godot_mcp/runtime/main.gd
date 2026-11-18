@@ -2,6 +2,7 @@ extends Node3D
 const REQUIRE_POSE = POSE_ENABLED
 const ALL_VIEWS = ALL_VIEWS_ENABLED
 const REQUIRE_FRAMING = FRAMING_ENABLED
+const GEOMETRY_PREVIEW = GEOMETRY_PREVIEW_ENABLED
 var camera: Camera3D
 var center: Vector3
 var radius := 2.0
@@ -62,7 +63,34 @@ func _ready():
  if meshes.is_empty():
   push_error("No mesh instances")
   return
- if not REQUIRE_POSE:
+ var geometry_preview_surfaces = 0
+ if GEOMETRY_PREVIEW and not REQUIRE_POSE:
+  var shader = Shader.new()
+  shader.code = """shader_type spatial;
+render_mode specular_disabled;
+void fragment() {
+ vec3 face = cross(dFdx(VERTEX), dFdy(VERTEX));
+ float magnitude = length(face);
+ if (magnitude > 0.0) {
+  face /= magnitude;
+  NORMAL = dot(face, VIEW) < 0.0 ? -face : face;
+ } else {
+  NORMAL = VIEW;
+ }
+ ALBEDO = vec3(0.55);
+ ROUGHNESS = 1.0;
+}"""
+  var preview = ShaderMaterial.new()
+  preview.shader = shader
+  for mesh in meshes:
+   if mesh.skin != null or not mesh.mesh is ArrayMesh:
+    continue
+   var array_mesh := mesh.mesh as ArrayMesh
+   for surface in range(array_mesh.get_surface_count()):
+    if array_mesh.surface_get_primitive_type(surface) == Mesh.PRIMITIVE_TRIANGLES:
+     mesh.set_surface_override_material(surface, preview)
+     geometry_preview_surfaces += 1
+ if not REQUIRE_POSE and not GEOMETRY_PREVIEW:
   for mesh in meshes:
    if mesh.skin != null or not mesh.mesh is ArrayMesh:
     continue
@@ -147,6 +175,7 @@ func _ready():
   metadata["pose"] = pose_metadata
  else:
   metadata["camera_frame"] = {"center": vector(center), "distance": camera.global_position.distance_to(center)}
+  metadata["geometry_preview_surfaces"] = geometry_preview_surfaces
  var label = Label.new()
  label.text = "Drag to orbit · Scroll to zoom · R to reset | white bar = 1 m"
  var hud = CanvasLayer.new()

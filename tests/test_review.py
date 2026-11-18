@@ -102,6 +102,115 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "metadata"):
                 validate_view_captures(root, receipt)
 
+    def test_static_framing_is_validated_and_sealed(self):
+        import json
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            frame = {"center": [1.0, 2.0, 3.0], "distance": 4.0}
+            receipt = prepare(root, "mesh.glb", "review", framing=frame)
+            self.assertEqual(receipt["framing"], frame)
+            self.assertEqual(inspect(root, "review")["framing"], frame)
+            for index, bad in enumerate(
+                (
+                    {"center": [0, 1], "distance": 1},
+                    {"center": [0, float("nan"), 0], "distance": 1},
+                    {"center": [0, 0, 0], "distance": 0},
+                    {"center": [0, 0, 0], "distance": float("inf")},
+                )
+            ):
+                with self.subTest(frame=bad), self.assertRaises(ValueError):
+                    prepare(root, "mesh.glb", f"invalid-{index}", framing=bad)
+                self.assertFalse((root / f"invalid-{index}").exists())
+            with self.assertRaisesRegex(ValueError, "static"):
+                prepare(root, "mesh.glb", "pose", pose={}, framing=frame)
+            self.assertFalse((root / "pose").exists())
+            owner = root / "review/owner.json"
+            value = json.loads(owner.read_text())
+            value["framing"]["distance"] = 5
+            owner.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ValueError, "ownership"):
+                inspect(root, "review")
+
+    def test_camera_evidence_binds_scene_and_requested_frame(self):
+        import json
+
+        from godot_mcp.review import validate_camera_evidence
+
+        with TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            (root / "bundle").mkdir()
+            metadata = root / "bundle/capture.png.json"
+            scene = {"camera_frame": {"center": [1, 2, 3], "distance": 4}}
+            metadata.write_text(json.dumps(scene))
+            receipt = {
+                "bundle": "bundle",
+                "scene": scene,
+                "artifacts": {"bundle/capture.png.json": "digest"},
+                "framing": {"center": [1, 2, 3], "distance": 4},
+            }
+            validate_camera_evidence(root, receipt)
+            receipt["framing"]["distance"] = 5
+            with self.assertRaisesRegex(ValueError, "differs"):
+                validate_camera_evidence(root, receipt)
+            receipt["framing"]["distance"] = 4
+            metadata.write_text(
+                json.dumps({"camera_frame": {"center": [0, 0, 0], "distance": 4}})
+            )
+            with self.assertRaisesRegex(ValueError, "metadata changed"):
+                validate_camera_evidence(root, receipt)
+
+    def test_legacy_prepared_capture_checks_new_camera_metadata(self):
+        import json
+        import os
+        from unittest.mock import patch
+
+        from godot_mcp.review import digest
+
+        with TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            (root / "mesh.glb").write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review")
+            owner_path = root / "review/owner.json"
+            owner = json.loads(owner_path.read_text())
+            del owner["camera_frame_evidence"]
+            del receipt["camera_frame_evidence"]
+            owner_path.write_text(json.dumps(owner))
+            bundle = root / "review/bundle"
+            bundle.mkdir()
+            metadata = bundle / "capture.png.json"
+            scene = {"camera_frame": {"center": [0, 0, 0], "distance": 1}}
+            metadata.write_text(json.dumps(scene))
+            tools = {
+                name: str(root / "mesh.glb")
+                for name in (
+                    "CAVI_GODOT_BIN",
+                    "CAVI_GODOT_WEB_TEMPLATE",
+                    "CAVI_CHROMIUM_BIN",
+                    "CAVI_NODE_BIN",
+                )
+            }
+            receipt.update(
+                state="captured",
+                bundle="bundle",
+                scene=scene,
+                inputs={"tools": {name: "digest" for name in tools}},
+                artifacts={"bundle/capture.png.json": digest(metadata)},
+            )
+            (root / "review/review.json").write_text(json.dumps(receipt))
+            with (
+                patch.dict(os.environ, tools),
+                patch(
+                    "godot_mcp.review.input_snapshot", return_value=receipt["inputs"]
+                ),
+            ):
+                self.assertEqual(inspect(root, "review")["scene"], scene)
+                receipt["scene"]["camera_frame"]["distance"] = 2
+                (root / "review/review.json").write_text(json.dumps(receipt))
+                with self.assertRaisesRegex(ValueError, "metadata changed"):
+                    inspect(root, "review")
+
     def test_changed_source_rejected(self):
         with TemporaryDirectory() as d:
             root = Path(d)
@@ -828,7 +937,9 @@ class OversizeSealTests(unittest.TestCase):
                 if label == "browser":
                     path = Path(command[-1])
                     path.write_bytes(b"png")
-                    Path(str(path) + ".json").write_text("{}")
+                    Path(str(path) + ".json").write_text(
+                        '{"camera_frame":{"center":[0,0,0],"distance":1}}'
+                    )
                 return "fixture"
 
             with (

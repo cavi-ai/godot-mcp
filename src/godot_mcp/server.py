@@ -12,6 +12,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, StrictBool
 
 from . import inspection, motion, review
+from .framing import Framing
 from .pose import Pose
 
 
@@ -63,6 +64,7 @@ async def godot_review_prepare(
     view: Literal["front", "three-quarter", "side"] = "three-quarter",
     pose: Pose | None = None,
     all_views: StrictBool = False,
+    framing: Framing | None = None,
 ) -> dict[str, Any]:
     """Prepare a GLB review, optionally at a selected animation pose."""
     return await call(
@@ -73,6 +75,7 @@ async def godot_review_prepare(
         view,
         pose.model_dump() if pose is not None else None,
         all_views,
+        framing.model_dump() if framing is not None else None,
     )
 
 

@@ -1,6 +1,7 @@
 extends Node3D
 const REQUIRE_POSE = POSE_ENABLED
 const ALL_VIEWS = ALL_VIEWS_ENABLED
+const REQUIRE_FRAMING = FRAMING_ENABLED
 var camera: Camera3D
 var center: Vector3
 var radius := 2.0
@@ -94,6 +95,13 @@ func _ready():
   bounds = pose_bounds.grow(padding)
  center = bounds.get_center()
  radius = max(bounds.size.length() * 0.8, 0.1)
+ if REQUIRE_FRAMING:
+  var frame = JSON.parse_string(FileAccess.get_file_as_string("res://framing.json"))
+  if not frame is Dictionary or not frame.has("center") or not frame.has("distance"):
+   push_error("Invalid camera framing")
+   return
+  center = Vector3(frame.center[0], frame.center[1], frame.center[2])
+  radius = float(frame.distance) / 1.75
  initial_radius = radius
  camera = Camera3D.new()
  add_child(camera)
@@ -137,6 +145,8 @@ func _ready():
   "godot_version": Engine.get_version_info()}
  if REQUIRE_POSE:
   metadata["pose"] = pose_metadata
+ else:
+  metadata["camera_frame"] = {"center": vector(center), "distance": camera.global_position.distance_to(center)}
  var label = Label.new()
  label.text = "Drag to orbit · Scroll to zoom · R to reset | white bar = 1 m"
  var hud = CanvasLayer.new()

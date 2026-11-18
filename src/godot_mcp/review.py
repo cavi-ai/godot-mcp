@@ -140,7 +140,21 @@ def atomic_json(path, value):
     journal.write_json(path, value)
 
 
-def prepare(root, source, directory, view="three-quarter", pose=None, all_views=False):
+def prepare(
+    root,
+    source,
+    directory,
+    view="three-quarter",
+    pose=None,
+    all_views=False,
+    framing=None,
+):
+    if framing is not None:
+        if pose is not None:
+            raise ValueError("Camera framing is only supported for static reviews")
+        from .framing import Framing
+
+        framing = Framing.model_validate(framing).model_dump()
     if type(all_views) is not bool:
         raise ValueError("all_views must be a boolean")
     if all_views and pose is not None:
@@ -167,20 +181,28 @@ def prepare(root, source, directory, view="three-quarter", pose=None, all_views=
         "view": view,
         "state": "prepared",
     }
+    if pose is None:
+        receipt["camera_frame_evidence"] = True
     if pose is not None:
         receipt["pose"] = pose
     if all_views:
         receipt["all_views"] = True
+    if framing is not None:
+        receipt["framing"] = framing
     owner = {
         "kind": receipt["kind"],
         "source": source,
         "source_sha256": receipt["source_sha256"],
         "view": view,
     }
+    if pose is None:
+        owner["camera_frame_evidence"] = True
     if pose is not None:
         owner["pose"] = pose
     if all_views:
         owner["all_views"] = True
+    if framing is not None:
+        owner["framing"] = framing
     try:
         atomic_json(dest / "owner.json", owner)
         atomic_json(dest / "review.json", receipt)
@@ -212,6 +234,12 @@ def input_snapshot(root, receipt, tools):
         "source_sha256": source_hash,
         "view": receipt["view"],
         **({"pose": receipt["pose"]} if "pose" in receipt else {}),
+        **({"framing": receipt["framing"]} if "framing" in receipt else {}),
+        **(
+            {"camera_frame_evidence": True}
+            if receipt.get("camera_frame_evidence")
+            else {}
+        ),
         **({"all_views": True} if receipt.get("all_views") else {}),
         "provider": provider_identity(),
         "tools": {name: digest(path) for name, path in tools.items()},
@@ -241,6 +269,16 @@ def inspect(root, directory, include_status=True):
         receipt["all_views"] is not True or "pose" in receipt
     ):
         raise ValueError("Invalid multiple-view review")
+    if "camera_frame_evidence" in receipt and (
+        receipt["camera_frame_evidence"] is not True or "pose" in receipt
+    ):
+        raise ValueError("Invalid camera frame evidence")
+    if "framing" in receipt:
+        from .framing import Framing
+
+        if "pose" in receipt:
+            raise ValueError("Invalid camera framing for pose review")
+        Framing.model_validate(receipt["framing"])
     owner = files.load_json(dest / "owner.json")
     if not isinstance(owner, dict) or not all(
         key in receipt for key in ("kind", "source", "source_sha256", "view")
@@ -258,6 +296,8 @@ def inspect(root, directory, include_status=True):
             "source_sha256",
             "view",
             *(["pose"] if "pose" in receipt else []),
+            *(["framing"] if "framing" in receipt else []),
+            *(["camera_frame_evidence"] if "camera_frame_evidence" in receipt else []),
             *(["all_views"] if "all_views" in receipt else []),
         )
     }:
@@ -290,6 +330,15 @@ def inspect(root, directory, include_status=True):
             raise ValueError("Review artifact changed")
     if receipt.get("state") == "captured" and receipt.get("all_views"):
         validate_view_captures(dest, receipt)
+    if receipt.get("state") == "captured" and (
+        receipt.get("camera_frame_evidence") is True
+        or "framing" in receipt
+        or (
+            isinstance(receipt.get("scene"), dict)
+            and "camera_frame" in receipt["scene"]
+        )
+    ):
+        validate_camera_evidence(dest, receipt)
     if receipt.get("state") == "captured" and "pose" in receipt:
         bundle = receipt.get("bundle")
         if not isinstance(bundle, str):
@@ -319,6 +368,23 @@ def inspect(root, directory, include_status=True):
             max(entries, key=lambda p: p.stat().st_mtime_ns).name if entries else None
         )
     return receipt
+
+
+def validate_camera_evidence(dest, receipt):
+    from .framing import validate_frame
+
+    bundle = receipt.get("bundle")
+    if not isinstance(bundle, str):
+        raise ValueError("Missing camera review bundle")  # noqa: TRY004
+    metadata = (dest / bundle / "capture.png.json").resolve()
+    if not metadata.is_relative_to(dest) or str(
+        metadata.relative_to(dest)
+    ) not in receipt.get("artifacts", {}):
+        raise ValueError("Missing camera frame evidence")
+    scene = files.load_json(metadata)
+    if not isinstance(scene, dict) or scene != receipt.get("scene"):
+        raise ValueError("Captured camera metadata changed")
+    validate_frame(scene.get("camera_frame"), receipt.get("framing"))
 
 
 VIEWS = ("front", "three-quarter", "side")
@@ -776,6 +842,7 @@ def capture_locked(root, directory):
             "source_sha256": receipt["source_sha256"],
             "view": receipt["view"],
             **({"pose": receipt["pose"]} if "pose" in receipt else {}),
+            **({"framing": receipt["framing"]} if "framing" in receipt else {}),
             **({"all_views": True} if receipt.get("all_views") else {}),
             "directory": directory,
         },
@@ -795,6 +862,7 @@ def capture_locked(root, directory):
                 ],
             )
             .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
+            .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
             .replace(
                 "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
             )
@@ -804,6 +872,11 @@ def capture_locked(root, directory):
             pose_hash = digest(project / "pose.json")
             if files.load_json(project / "pose.json") != receipt["pose"]:
                 raise ValueError("Copied pose configuration changed")
+        if "framing" in receipt:
+            atomic_json(project / "framing.json", receipt["framing"])
+            framing_hash = digest(project / "framing.json")
+            if files.load_json(project / "framing.json") != receipt["framing"]:
+                raise ValueError("Copied camera framing changed")
         shutil.copyfile(inside(root, receipt["source"]), project / "subject.glb")
         if digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]:
             raise ValueError("Copied source changed")
@@ -820,6 +893,7 @@ def capture_locked(root, directory):
                 ],
             )
             .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
+            .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
             .replace(
                 "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
             )
@@ -833,7 +907,11 @@ def capture_locked(root, directory):
         preset = (
             '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\n'
             'export_filter="all_resources"\ninclude_filter='
-            + ('"pose.json"' if "pose" in receipt else '""')
+            + json.dumps(
+                ",".join(
+                    name + ".json" for name in ("pose", "framing") if name in receipt
+                )
+            )
             + '\nexclude_filter=""\n'
             "[preset.0.options]\nvariant/thread_support=false\n"
             "custom_template/release="
@@ -927,6 +1005,11 @@ def capture_locked(root, directory):
             or files.load_json(project / "pose.json") != receipt["pose"]
         ):
             raise ValueError("Pose configuration changed during capture")
+        if "framing" in receipt and (
+            digest(project / "framing.json") != framing_hash
+            or files.load_json(project / "framing.json") != receipt["framing"]
+        ):
+            raise ValueError("Camera framing changed during capture")
         inspect(root, directory, include_status=False)
         if input_snapshot(root, receipt, tools) != inputs:
             raise ValueError("Review input changed during capture")
@@ -940,6 +1023,10 @@ def capture_locked(root, directory):
                 or type(scene["godot_version"].get("major")) is not int
             ):
                 raise ValueError("Missing rendered Godot version")
+        if "pose" not in receipt:
+            from .framing import validate_frame
+
+            validate_frame(scene.get("camera_frame"), receipt.get("framing"))
         if receipt.get("all_views"):
             validate_view_files(export, receipt["view"])
         share_runtime(root, export / "index.wasm")
@@ -960,6 +1047,8 @@ def capture_locked(root, directory):
         receipt["godot_version"] = godot_version
         receipt["renderer"] = "godot-web-compatibility-webgl2"
         receipt["scene"] = scene
+        if "framing" in receipt:
+            receipt["project"]["framing.json"] = framing_hash
         if "pose" in receipt:
             receipt["project"]["pose.json"] = pose_hash
         receipt["artifacts"] = {
@@ -975,6 +1064,7 @@ def capture_locked(root, directory):
             "main.tscn",
             "export_presets.cfg",
             *(["pose.json"] if "pose" in receipt else []),
+            *(["framing.json"] if "framing" in receipt else []),
         ):
             shutil.copyfile(project / filename, evidence / filename)
         if receipt.get("all_views"):
@@ -1004,6 +1094,8 @@ def capture_locked(root, directory):
         atomic_json(evidence / "result.json", receipt)
         os.rename(export, bundle)
         try:
+            if "pose" not in receipt:
+                validate_camera_evidence(dest, receipt)
             if receipt.get("all_views"):
                 validate_view_captures(dest, receipt)
             atomic_json(dest / "review.json", receipt)

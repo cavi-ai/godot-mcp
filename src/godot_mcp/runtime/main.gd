@@ -59,6 +59,19 @@ func _ready():
  if meshes.is_empty():
   push_error("No mesh instances")
   return
+ if not REQUIRE_POSE:
+  for mesh in meshes:
+   if mesh.skin != null or not mesh.mesh is ArrayMesh:
+    continue
+   var array_mesh := mesh.mesh as ArrayMesh
+   for surface in range(array_mesh.get_surface_count()):
+    var material := mesh.get_active_material(surface) as BaseMaterial3D
+    var has_color := (array_mesh.surface_get_format(surface) & Mesh.ARRAY_FORMAT_COLOR) != 0
+    # Imported drafts may have vertex colors without the material flag.
+    if has_color and material != null and not material.vertex_color_use_as_albedo and material.albedo_texture == null:
+     var adjusted := material.duplicate() as BaseMaterial3D
+     adjusted.vertex_color_use_as_albedo = true
+     mesh.set_surface_override_material(surface, adjusted)
  var bounds: AABB
  var first = true
  for mesh in meshes:

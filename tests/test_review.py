@@ -47,6 +47,61 @@ class ReviewTests(unittest.TestCase):
                 self.assertEqual(prepared["source"], source.name)
                 self.assertEqual(inspect(root, name)["state"], "prepared")
 
+    def test_multiple_views_are_sealed_and_reject_pose_before_writing(self):
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review", all_views=True)
+            self.assertTrue(receipt["all_views"])
+            self.assertTrue(inspect(root, "review")["all_views"])
+            with self.assertRaisesRegex(ValueError, "static"):
+                prepare(root, "mesh.glb", "pose", pose={}, all_views=True)
+            self.assertFalse((root / "pose").exists())
+            owner = root / "review" / "owner.json"
+            import json
+
+            owner_data = json.loads(owner.read_text())
+            del owner_data["all_views"]
+            owner.write_text(json.dumps(owner_data))
+            with self.assertRaisesRegex(ValueError, "ownership"):
+                inspect(root, "review")
+
+    def test_view_evidence_requires_each_bound_file_and_correct_metadata(self):
+        import json
+
+        from godot_mcp.review import validate_view_captures
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            bundle = root / "bundle"
+            bundle.mkdir()
+            captures = {}
+            artifacts = {}
+            for index, view in enumerate(("front", "three-quarter", "side")):
+                name = "capture.png" if view == "front" else f"capture-{view}.png"
+                image = f"bundle/{name}"
+                metadata = image + ".view.json"
+                (root / image).write_bytes(view.encode())
+                (root / metadata).write_text(
+                    json.dumps({"view": view, "camera_position": [index, 2, 3]})
+                )
+                captures[view] = {"image": image, "metadata": metadata}
+                artifacts[image] = artifacts[metadata] = "digest"
+            receipt = {
+                "bundle": "bundle",
+                "view": "front",
+                "view_captures": captures,
+                "artifacts": artifacts,
+            }
+            validate_view_captures(root, receipt)
+            del artifacts[captures["side"]["image"]]
+            with self.assertRaisesRegex(ValueError, "Missing"):
+                validate_view_captures(root, receipt)
+            artifacts[captures["side"]["image"]] = "digest"
+            (root / captures["side"]["metadata"]).write_text('{"view":"front"}')
+            with self.assertRaisesRegex(ValueError, "metadata"):
+                validate_view_captures(root, receipt)
+
     def test_changed_source_rejected(self):
         with TemporaryDirectory() as d:
             root = Path(d)

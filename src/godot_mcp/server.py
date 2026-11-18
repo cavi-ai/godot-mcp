@@ -9,7 +9,7 @@ import anyio
 from cavi_mcp_core.contracts import failure
 from cavi_mcp_core.server import READ_ONLY, Server
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, StrictBool
 
 from . import inspection, motion, review
 from .pose import Pose
@@ -62,6 +62,7 @@ async def godot_review_prepare(
     directory: str,
     view: Literal["front", "three-quarter", "side"] = "three-quarter",
     pose: Pose | None = None,
+    all_views: StrictBool = False,
 ) -> dict[str, Any]:
     """Prepare a GLB review, optionally at a selected animation pose."""
     return await call(
@@ -71,6 +72,7 @@ async def godot_review_prepare(
         directory,
         view,
         pose.model_dump() if pose is not None else None,
+        all_views,
     )
 
 

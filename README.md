@@ -40,7 +40,7 @@ To capture a rendered view, also set `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_B
 
 - Inspect a self-contained GLB for scene nodes, mesh surfaces, materials, UV presence, skeletons and clips.
 - Sample an animation's node and skeleton transforms at selected times.
-- Prepare and capture a static view, or capture one selected pose from an animated GLB. Open the capture for visual review.
+- Prepare and capture a static view, including texture-free and vertex-colored drafts before cleanup, or capture one selected pose from an animated GLB. Open the capture for visual review.
 - Serve the exported review bundle locally to orbit and zoom; press R to reset the camera. A white bar marks one metre. Pose reviews open paused at the requested time. Play or pause the selected clip, scrub the timeline, or select Reset pose.
 
 <details>
@@ -50,7 +50,7 @@ To capture a rendered view, also set `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_B
 
 For motion, use the inspection report's player path and clip name with `godot_motion_inspect`. Supply 2–9 strictly increasing `normalized_times` between 0 and 1. The result measures node and skeleton transforms, not skinned surface deformation.
 
-For a static review, `godot_review_prepare` takes the source, a new directory and `front`, `three-quarter` or `side` view. Static inputs cannot contain skins or animations; textures must be embedded PNG or JPEG. To review an animated asset, inspect it first and provide a selected `pose` with the reported player path, animation name and time in seconds. `godot_review_capture` produces a frame, and `godot_review_inspect` checks source, tool and artifact hashes and reports the latest attempt.
+For a static review, `godot_review_prepare` takes the source, a new directory and `front`, `three-quarter` or `side` view. Static inputs cannot contain skins or animations. Textures are optional; any images must be embedded PNG or JPEG. To review an animated asset, inspect it first and provide a selected `pose` with the reported player path, animation name and time in seconds. `godot_review_capture` produces a frame, and `godot_review_inspect` checks source, tool and artifact hashes and reports the latest attempt.
 
 To open the interactive view, serve the receipt's relative `bundle` within the review directory:
 

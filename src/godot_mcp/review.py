@@ -102,7 +102,7 @@ def read_glb(path, *, static_review=True):
         ):
             raise ValueError("Invalid embedded buffer view")
     images = document.get("images", [])
-    if (static_review and not images) or any(
+    if any(
         "uri" in image
         or type(image.get("bufferView")) is not int
         or not 0 <= image["bufferView"] < len(views)

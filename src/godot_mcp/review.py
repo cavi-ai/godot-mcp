@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import stat
 import struct
@@ -139,7 +140,11 @@ def atomic_json(path, value):
     journal.write_json(path, value)
 
 
-def prepare(root, source, directory, view="three-quarter", pose=None):
+def prepare(root, source, directory, view="three-quarter", pose=None, all_views=False):
+    if type(all_views) is not bool:
+        raise ValueError("all_views must be a boolean")
+    if all_views and pose is not None:
+        raise ValueError("Multiple views are only supported for static reviews")
     if view not in ("front", "three-quarter", "side"):
         raise ValueError("Unsupported view")
     src, dest = inside(root, source), inside(root, directory)
@@ -164,6 +169,8 @@ def prepare(root, source, directory, view="three-quarter", pose=None):
     }
     if pose is not None:
         receipt["pose"] = pose
+    if all_views:
+        receipt["all_views"] = True
     owner = {
         "kind": receipt["kind"],
         "source": source,
@@ -172,6 +179,8 @@ def prepare(root, source, directory, view="three-quarter", pose=None):
     }
     if pose is not None:
         owner["pose"] = pose
+    if all_views:
+        owner["all_views"] = True
     try:
         atomic_json(dest / "owner.json", owner)
         atomic_json(dest / "review.json", receipt)
@@ -203,6 +212,7 @@ def input_snapshot(root, receipt, tools):
         "source_sha256": source_hash,
         "view": receipt["view"],
         **({"pose": receipt["pose"]} if "pose" in receipt else {}),
+        **({"all_views": True} if receipt.get("all_views") else {}),
         "provider": provider_identity(),
         "tools": {name: digest(path) for name, path in tools.items()},
     }
@@ -227,6 +237,10 @@ def inspect(root, directory, include_status=True):
         )
     ):
         raise ValueError("Invalid review receipt")
+    if "all_views" in receipt and (
+        receipt["all_views"] is not True or "pose" in receipt
+    ):
+        raise ValueError("Invalid multiple-view review")
     owner = files.load_json(dest / "owner.json")
     if not isinstance(owner, dict) or not all(
         key in receipt for key in ("kind", "source", "source_sha256", "view")
@@ -244,6 +258,7 @@ def inspect(root, directory, include_status=True):
             "source_sha256",
             "view",
             *(["pose"] if "pose" in receipt else []),
+            *(["all_views"] if "all_views" in receipt else []),
         )
     }:
         raise ValueError("Review ownership marker changed")
@@ -273,6 +288,8 @@ def inspect(root, directory, include_status=True):
         path = (dest / relative).resolve()
         if not path.is_relative_to(dest) or digest(path, ARTIFACT_LIMIT) != expected:
             raise ValueError("Review artifact changed")
+    if receipt.get("state") == "captured" and receipt.get("all_views"):
+        validate_view_captures(dest, receipt)
     if receipt.get("state") == "captured" and "pose" in receipt:
         bundle = receipt.get("bundle")
         if not isinstance(bundle, str):
@@ -302,6 +319,56 @@ def inspect(root, directory, include_status=True):
             max(entries, key=lambda p: p.stat().st_mtime_ns).name if entries else None
         )
     return receipt
+
+
+VIEWS = ("front", "three-quarter", "side")
+
+
+def view_filename(view, primary):
+    return "capture.png" if view == primary else f"capture-{view}.png"
+
+
+def validate_view_files(bundle, primary):
+    positions = set()
+    for view in VIEWS:
+        image = bundle / view_filename(view, primary)
+        if not image.is_file():
+            raise ValueError("Missing view capture artifact")
+        metadata = files.load_json(Path(str(image) + ".view.json"))
+        if not isinstance(metadata, dict) or metadata.get("view") != view:
+            raise ValueError("Invalid view capture metadata")
+        camera = metadata.get("camera_position")
+        if (
+            not isinstance(camera, list)
+            or len(camera) != 3
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in camera)
+        ):
+            raise ValueError("Invalid view camera position")
+        positions.add(tuple(camera))
+    if len(positions) != len(VIEWS):
+        raise ValueError("View camera positions must differ")
+
+
+def validate_view_captures(dest, receipt):
+    bundle = receipt.get("bundle")
+    captures = receipt.get("view_captures")
+    if (
+        not isinstance(bundle, str)
+        or not isinstance(captures, dict)
+        or set(captures) != set(VIEWS)
+    ):
+        raise ValueError("Missing view captures")
+    for view in VIEWS:
+        image_path = str(Path(bundle) / view_filename(view, receipt["view"]))
+        metadata_path = image_path + ".view.json"
+        if captures[view] != {"image": image_path, "metadata": metadata_path}:
+            raise ValueError("Invalid view capture binding")
+        if (
+            image_path not in receipt["artifacts"]
+            or metadata_path not in receipt["artifacts"]
+        ):
+            raise ValueError("Missing view capture artifact")
+    validate_view_files(dest / bundle, receipt["view"])
 
 
 def run_owned(command, timeout, evidence=None, label="process"):
@@ -709,6 +776,7 @@ def capture_locked(root, directory):
             "source_sha256": receipt["source_sha256"],
             "view": receipt["view"],
             **({"pose": receipt["pose"]} if "pose" in receipt else {}),
+            **({"all_views": True} if receipt.get("all_views") else {}),
             "directory": directory,
         },
     )
@@ -727,6 +795,9 @@ def capture_locked(root, directory):
                 ],
             )
             .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
+            .replace(
+                "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
+            )
         )
         if "pose" in receipt:
             atomic_json(project / "pose.json", receipt["pose"])
@@ -749,6 +820,9 @@ def capture_locked(root, directory):
                 ],
             )
             .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
+            .replace(
+                "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
+            )
         )
         if (project / "main.gd").read_text() != expected_script or digest(
             runtime / "main.gd"
@@ -831,6 +905,7 @@ def capture_locked(root, directory):
                             str(port),
                             url,
                             str(export / "capture.png"),
+                            *([receipt["view"]] if receipt.get("all_views") else []),
                         ],
                         90,
                         evidence,
@@ -865,6 +940,8 @@ def capture_locked(root, directory):
                 or type(scene["godot_version"].get("major")) is not int
             ):
                 raise ValueError("Missing rendered Godot version")
+        if receipt.get("all_views"):
+            validate_view_files(export, receipt["view"])
         share_runtime(root, export / "index.wasm")
         bundle = evidence / "bundle"
         receipt["state"] = "captured"
@@ -900,6 +977,23 @@ def capture_locked(root, directory):
             *(["pose.json"] if "pose" in receipt else []),
         ):
             shutil.copyfile(project / filename, evidence / filename)
+        if receipt.get("all_views"):
+            receipt["view_captures"] = {
+                view: {
+                    "image": str(
+                        (bundle / view_filename(view, receipt["view"])).relative_to(
+                            dest
+                        )
+                    ),
+                    "metadata": str(
+                        (bundle / view_filename(view, receipt["view"])).relative_to(
+                            dest
+                        )
+                    )
+                    + ".view.json",
+                }
+                for view in VIEWS
+            }
         receipt["artifacts"].update(
             {
                 str(path.relative_to(dest)): digest(path, ARTIFACT_LIMIT)
@@ -910,6 +1004,8 @@ def capture_locked(root, directory):
         atomic_json(evidence / "result.json", receipt)
         os.rename(export, bundle)
         try:
+            if receipt.get("all_views"):
+                validate_view_captures(dest, receipt)
             atomic_json(dest / "review.json", receipt)
         except BaseException:
             shutil.rmtree(bundle)

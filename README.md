@@ -50,7 +50,7 @@ To capture a rendered view, also set `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_B
 
 For motion, use the inspection report's player path and clip name with `godot_motion_inspect`. Supply 2–9 strictly increasing `normalized_times` between 0 and 1. The result measures node and skeleton transforms, not skinned surface deformation.
 
-For a static review, `godot_review_prepare` takes the source, a new directory and `front`, `three-quarter` or `side` view. Static inputs cannot contain skins or animations. Textures are optional; any images must be embedded PNG or JPEG. To review an animated asset, inspect it first and provide a selected `pose` with the reported player path, animation name and time in seconds. `godot_review_capture` produces a frame, and `godot_review_inspect` checks source, tool and artifact hashes and reports the latest attempt.
+For a static review, `godot_review_prepare` takes the source, a new directory and `front`, `three-quarter` or `side` view. Static inputs cannot contain skins or animations. Textures are optional; any images must be embedded PNG or JPEG. To review an animated asset, inspect it first and provide a selected `pose` with the reported player path, animation name and time in seconds. For static reviews, set `all_views` to capture all three angles in one session; the selected view remains `capture.png`, and the other angles use `capture-front.png`, `capture-three-quarter.png` or `capture-side.png`. `godot_review_capture` produces the frames, and `godot_review_inspect` checks source, tool and artifact hashes and reports the latest attempt.
 
 To open the interactive view, serve the receipt's relative `bundle` within the review directory:
 

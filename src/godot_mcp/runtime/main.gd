@@ -1,5 +1,6 @@
 extends Node3D
 const REQUIRE_POSE = POSE_ENABLED
+const ALL_VIEWS = ALL_VIEWS_ENABLED
 var camera: Camera3D
 var center: Vector3
 var radius := 2.0
@@ -16,6 +17,7 @@ var play_button: Button
 var pose_slider: HSlider
 var pose_time_label: Label
 var playback_elapsed := 0.0
+var view_callback
 
 func _ready():
  var model = load("res://subject.glb").instantiate()
@@ -147,7 +149,24 @@ func _ready():
  await get_tree().process_frame
  await get_tree().process_frame
  if OS.has_feature("web"):
+  if ALL_VIEWS:
+   view_callback = JavaScriptBridge.create_callback(select_capture_view)
+   JavaScriptBridge.get_interface("window").godotReviewSetView = view_callback
   JavaScriptBridge.eval("window.godotReviewReady = " + JSON.stringify(metadata, "", true, true))
+
+func select_capture_view(args: Array):
+ if args.size() != 1 or not args[0] is String:
+  return
+ var views = {"front": 0.0, "three-quarter": 0.65, "side": 1.5708}
+ if not views.has(args[0]):
+  return
+ yaw = views[args[0]]
+ pitch = 0.3
+ radius = initial_radius
+ update_camera()
+ await RenderingServer.frame_post_draw
+ var state = {"view": args[0], "camera_position": vector(camera.global_position)}
+ JavaScriptBridge.eval("window.godotReviewView = " + JSON.stringify(state, "", true, true))
 
 func create_playback_controls(hud: CanvasLayer):
  var controls = HBoxContainer.new()

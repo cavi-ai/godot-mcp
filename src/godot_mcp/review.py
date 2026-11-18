@@ -136,6 +136,83 @@ def read_glb(path, *, static_review=True):
     return document
 
 
+def geometry_only(document):
+    """Identify unadorned triangle geometry without altering the source."""
+    if not isinstance(document, dict) or any(
+        document.get(key)
+        for key in (
+            "images",
+            "textures",
+            "materials",
+            "skins",
+            "animations",
+            "extensionsUsed",
+            "extensionsRequired",
+            "extensions",
+        )
+    ):
+        return False
+    meshes, accessors, nodes = (
+        document.get(key) for key in ("meshes", "accessors", "nodes")
+    )
+    if (
+        not isinstance(meshes, list)
+        or not meshes
+        or not isinstance(accessors, list)
+        or not isinstance(nodes, list)
+        or any(not isinstance(node, dict) or node.get("extensions") for node in nodes)
+    ):
+        return False
+
+    def valid_accessor(index, kind):
+        return (
+            type(index) is int
+            and 0 <= index < len(accessors)
+            and isinstance(accessors[index], dict)
+            and accessors[index].get("type") == kind
+            and not accessors[index].get("extensions")
+        )
+
+    for mesh in meshes:
+        if (
+            not isinstance(mesh, dict)
+            or mesh.get("extensions")
+            or not isinstance(mesh.get("primitives"), list)
+            or not mesh["primitives"]
+        ):
+            return False
+        for primitive in mesh["primitives"]:
+            if not isinstance(primitive, dict):
+                return False
+            attributes = primitive.get("attributes")
+            if (
+                not isinstance(attributes, dict)
+                or set(attributes) != {"POSITION"}
+                or not valid_accessor(attributes["POSITION"], "VEC3")
+                or type(primitive.get("mode", 4)) is not int
+                or primitive.get("mode", 4) != 4
+                or any(
+                    key in primitive for key in ("material", "targets", "extensions")
+                )
+                or (
+                    "indices" in primitive
+                    and not valid_accessor(primitive["indices"], "SCALAR")
+                )
+            ):
+                return False
+    return True
+
+
+def validate_geometry_preview(scene, expected):
+    count = scene.get("geometry_preview_surfaces")
+    if (
+        type(count) is not int
+        or (expected and (count < 1 or count != scene.get("material_surfaces")))
+        or (not expected and count != 0)
+    ):
+        raise ValueError("Rendered geometry preview does not match source")
+
+
 def atomic_json(path, value):
     journal.write_json(path, value)
 
@@ -852,6 +929,12 @@ def capture_locked(root, directory):
         project.mkdir()
         for filename in ("project.godot", "main.gd", "main.tscn"):
             shutil.copyfile(runtime / filename, project / filename)
+        shutil.copyfile(inside(root, receipt["source"]), project / "subject.glb")
+        if digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]:
+            raise ValueError("Copied source changed")
+        fallback = "pose" not in receipt and geometry_only(
+            read_glb(project / "subject.glb")
+        )
         script = project / "main.gd"
         script.write_text(
             script.read_text()
@@ -863,6 +946,7 @@ def capture_locked(root, directory):
             )
             .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
             .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
+            .replace("GEOMETRY_PREVIEW_ENABLED", "true" if fallback else "false")
             .replace(
                 "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
             )
@@ -877,9 +961,6 @@ def capture_locked(root, directory):
             framing_hash = digest(project / "framing.json")
             if files.load_json(project / "framing.json") != receipt["framing"]:
                 raise ValueError("Copied camera framing changed")
-        shutil.copyfile(inside(root, receipt["source"]), project / "subject.glb")
-        if digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]:
-            raise ValueError("Copied source changed")
         for filename in ("project.godot", "main.tscn"):
             if digest(project / filename) != inputs["provider"]["runtime"][filename]:
                 raise ValueError("Copied runtime changed")
@@ -894,6 +975,7 @@ def capture_locked(root, directory):
             )
             .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
             .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
+            .replace("GEOMETRY_PREVIEW_ENABLED", "true" if fallback else "false")
             .replace(
                 "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
             )
@@ -1027,6 +1109,7 @@ def capture_locked(root, directory):
             from .framing import validate_frame
 
             validate_frame(scene.get("camera_frame"), receipt.get("framing"))
+            validate_geometry_preview(scene, fallback)
         if receipt.get("all_views"):
             validate_view_files(export, receipt["view"])
         share_runtime(root, export / "index.wasm")

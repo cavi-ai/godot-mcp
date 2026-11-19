@@ -1,20 +1,31 @@
 """Owned, source-bound review requests for static GLB assets."""
 
 import hashlib
+import http.server
 import json
-import math
 import os
 import re
+import shutil
+import signal
+import socketserver
 import stat
 import struct
+import subprocess
 import tempfile
-from datetime import UTC
+import threading
+import time
+from datetime import UTC, datetime
+from functools import partial
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 from cavi_mcp_core import files, journal, owned_exec, processes, workspace
 from cavi_mcp_core.contracts import OperationUnknown
 
 from . import config
+from .framing import Framing, validate_frame
+from .pose import Pose, validate_scene
+from .shapes import number, vector
 
 LIMIT = 64 * 1024 * 1024
 ARTIFACT_LIMIT = 256 * 1024 * 1024
@@ -191,12 +202,7 @@ def clip_lengths(document):
                 document.get("accessors"), sampler.get("input") if sampler else None
             )
             bound = accessor.get("max") if accessor else None
-            if (
-                not isinstance(bound, list)
-                or len(bound) != 1
-                or type(bound[0]) not in (int, float)
-                or not math.isfinite(bound[0])
-            ):
+            if not isinstance(bound, list) or len(bound) != 1 or not number(bound[0]):
                 times = []
                 break
             times.append(bound[0])
@@ -329,8 +335,6 @@ def prepare(
     if framing is not None:
         if pose is not None:
             raise ValueError("Camera framing is only supported for static reviews")
-        from .framing import Framing
-
         framing = Framing.model_validate(framing).model_dump()
     if type(all_views) is not bool:
         raise ValueError("all_views must be a boolean")
@@ -340,8 +344,6 @@ def prepare(
         raise ValueError("Unsupported view")
     src, dest = source_glb(root, source), new_output(root, directory)
     if pose is not None:
-        from .pose import Pose
-
         pose = Pose.model_validate(pose).model_dump()
     document = read_glb(src, static_review=pose is None)
     if pose is not None and not document.get("animations"):
@@ -350,36 +352,19 @@ def prepare(
         select_clip(document, pose["animation"], pose["time_seconds"])
     source_sha256 = digest(src, LIMIT)
     dest.mkdir()
-    receipt = {
-        "version": 1,
+    chosen = {"camera_frame_evidence": True} if pose is None else {"pose": pose}
+    if all_views:
+        chosen["all_views"] = True
+    if framing is not None:
+        chosen["framing"] = framing
+    owner = {
         "kind": "godot-asset-review",
         "source": source,
         "source_sha256": source_sha256,
         "view": view,
-        "state": "prepared",
+        **chosen,
     }
-    if pose is None:
-        receipt["camera_frame_evidence"] = True
-    if pose is not None:
-        receipt["pose"] = pose
-    if all_views:
-        receipt["all_views"] = True
-    if framing is not None:
-        receipt["framing"] = framing
-    owner = {
-        "kind": receipt["kind"],
-        "source": source,
-        "source_sha256": receipt["source_sha256"],
-        "view": view,
-    }
-    if pose is None:
-        owner["camera_frame_evidence"] = True
-    if pose is not None:
-        owner["pose"] = pose
-    if all_views:
-        owner["all_views"] = True
-    if framing is not None:
-        owner["framing"] = framing
+    receipt = {"version": 1, **owner, "state": "prepared"}
     try:
         atomic_json(dest / "owner.json", owner)
         atomic_json(dest / "review.json", receipt)
@@ -391,16 +376,23 @@ def prepare(
 
 
 def provider_identity():
-    from importlib.metadata import version
-
     package = Path(__file__).parent
     return {
-        "version": version("cavi-godot-mcp"),
+        "version": package_version("cavi-godot-mcp"),
         "source": {p.name: digest(p) for p in package.glob("*.py")},
         "runtime": {
             p.name: digest(p) for p in (package / "runtime").iterdir() if p.is_file()
         },
     }
+
+
+SELECTION = ("pose", "framing", "camera_frame_evidence", "all_views")
+OWNER = ("kind", "source", "source_sha256", "view")
+
+
+def selection(receipt):
+    """The review choices a receipt carries, as recorded at preparation."""
+    return {key: receipt[key] for key in SELECTION if key in receipt}
 
 
 def input_snapshot(root, receipt, tools):
@@ -410,14 +402,7 @@ def input_snapshot(root, receipt, tools):
     return {
         "source_sha256": source_hash,
         "view": receipt["view"],
-        **({"pose": receipt["pose"]} if "pose" in receipt else {}),
-        **({"framing": receipt["framing"]} if "framing" in receipt else {}),
-        **(
-            {"camera_frame_evidence": True}
-            if receipt.get("camera_frame_evidence")
-            else {}
-        ),
-        **({"all_views": True} if receipt.get("all_views") else {}),
+        **selection(receipt),
         "provider": provider_identity(),
         "tools": {name: digest(path) for name, path in tools.items()},
     }
@@ -451,33 +436,15 @@ def inspect(root, directory, include_status=True):
     ):
         raise ValueError("Invalid camera frame evidence")
     if "framing" in receipt:
-        from .framing import Framing
-
         if "pose" in receipt:
             raise ValueError("Invalid camera framing for pose review")
         Framing.model_validate(receipt["framing"])
     owner = files.load_json(dest / "owner.json")
-    if not isinstance(owner, dict) or not all(
-        key in receipt for key in ("kind", "source", "source_sha256", "view")
-    ):
+    if not isinstance(owner, dict) or not all(key in receipt for key in OWNER):
         raise ValueError("Invalid review ownership marker")
     if "pose" in receipt:
-        from .pose import Pose
-
         Pose.model_validate(receipt["pose"])
-    if owner != {
-        key: receipt[key]
-        for key in (
-            "kind",
-            "source",
-            "source_sha256",
-            "view",
-            *(["pose"] if "pose" in receipt else []),
-            *(["framing"] if "framing" in receipt else []),
-            *(["camera_frame_evidence"] if "camera_frame_evidence" in receipt else []),
-            *(["all_views"] if "all_views" in receipt else []),
-        )
-    }:
+    if owner != {key: receipt[key] for key in OWNER} | selection(receipt):
         raise ValueError("Review ownership marker changed")
     if digest(inside(root, receipt["source"]), LIMIT) != receipt["source_sha256"]:
         raise ValueError("Source changed")
@@ -538,8 +505,6 @@ def inspect(root, directory, include_status=True):
 
 
 def validate_camera_evidence(dest, receipt):
-    from .framing import validate_frame
-
     bundle = receipt.get("bundle")
     if not isinstance(bundle, str):
         raise ValueError("Missing camera review bundle")  # noqa: TRY004
@@ -571,11 +536,7 @@ def validate_view_files(bundle, primary):
         if not isinstance(metadata, dict) or metadata.get("view") != view:
             raise ValueError("Invalid view capture metadata")
         camera = metadata.get("camera_position")
-        if (
-            not isinstance(camera, list)
-            or len(camera) != 3
-            or any(type(v) not in (int, float) or not math.isfinite(v) for v in camera)
-        ):
+        if not vector(camera):
             raise ValueError("Invalid view camera position")
         positions.add(tuple(camera))
     if len(positions) != len(VIEWS):
@@ -605,11 +566,6 @@ def validate_view_captures(dest, receipt):
 
 
 def run_owned(command, timeout, evidence=None, label="process"):
-    import signal
-    import subprocess
-    import time
-    from datetime import datetime
-
     observations = []
 
     def group_members(group):
@@ -773,12 +729,6 @@ def run_owned(command, timeout, evidence=None, label="process"):
 
 def run_with_browser(command, profile, task, evidence):
     """Own a registered browser group while a bounded CDP client uses it."""
-    import signal
-    import subprocess
-    import threading
-    import time
-    from datetime import datetime
-
     actual = owned_exec.command(command, env=os.environ)
     started = datetime.now(UTC).isoformat()
     known, sampling_errors = {}, []
@@ -927,7 +877,7 @@ def share_runtime(root, wasm):
 
 
 def capture(root, directory):
-    import fcntl
+    import fcntl  # POSIX only; the rest of the server also runs where it is missing.
 
     dest = inside(root, directory)
     inspect(root, directory, include_status=False)
@@ -963,18 +913,10 @@ def capture(root, directory):
         os.close(fd)
 
 
-def validate_pose_scene(selection, scene):
-    from .pose import validate_scene
-
-    validate_scene(selection, scene)
+validate_pose_scene = validate_scene
 
 
 def capture_locked(root, directory):
-    import http.server
-    import shutil
-    import socketserver
-    import threading
-
     receipt = inspect(root, directory, include_status=False)
     dest = inside(root, directory)
     if receipt["state"] != "prepared":
@@ -990,16 +932,14 @@ def capture_locked(root, directory):
         {
             "source_sha256": receipt["source_sha256"],
             "view": receipt["view"],
-            **({"pose": receipt["pose"]} if "pose" in receipt else {}),
-            **({"framing": receipt["framing"]} if "framing" in receipt else {}),
-            **({"all_views": True} if receipt.get("all_views") else {}),
+            **selection(receipt),
             "directory": directory,
         },
     )
     with tempfile.TemporaryDirectory(prefix=".godot-review-", dir=dest) as temp:
         project = Path(temp) / "project"
         project.mkdir()
-        for filename in ("project.godot", "main.gd", "main.tscn"):
+        for filename in ("project.godot", "main.tscn"):
             shutil.copyfile(runtime / filename, project / filename)
         shutil.copyfile(inside(root, receipt["source"]), project / "subject.glb")
         if digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]:
@@ -1007,9 +947,14 @@ def capture_locked(root, directory):
         fallback = "pose" not in receipt and geometry_only(
             read_glb(project / "subject.glb")
         )
-        script = project / "main.gd"
-        script.write_text(
-            script.read_text()
+        template = (runtime / "main.gd").read_bytes()
+        if (
+            hashlib.sha256(template).hexdigest()
+            != inputs["provider"]["runtime"]["main.gd"]
+        ):
+            raise ValueError("Copied runtime changed")
+        expected_script = (
+            template.decode()
             .replace(
                 "VIEW_YAW",
                 {"front": "0.0", "three-quarter": "0.65", "side": "1.5708"}[
@@ -1023,6 +968,7 @@ def capture_locked(root, directory):
                 "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
             )
         )
+        (project / "main.gd").write_text(expected_script)
         if "pose" in receipt:
             atomic_json(project / "pose.json", receipt["pose"])
             pose_hash = digest(project / "pose.json")
@@ -1036,25 +982,7 @@ def capture_locked(root, directory):
         for filename in ("project.godot", "main.tscn"):
             if digest(project / filename) != inputs["provider"]["runtime"][filename]:
                 raise ValueError("Copied runtime changed")
-        expected_script = (
-            (runtime / "main.gd")
-            .read_text()
-            .replace(
-                "VIEW_YAW",
-                {"front": "0.0", "three-quarter": "0.65", "side": "1.5708"}[
-                    receipt["view"]
-                ],
-            )
-            .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
-            .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
-            .replace("GEOMETRY_PREVIEW_ENABLED", "true" if fallback else "false")
-            .replace(
-                "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
-            )
-        )
-        if (project / "main.gd").read_text() != expected_script or digest(
-            runtime / "main.gd"
-        ) != inputs["provider"]["runtime"]["main.gd"]:
+        if (project / "main.gd").read_text() != expected_script:
             raise ValueError("Copied runtime changed")
         export = project / "bundle"
         export.mkdir()
@@ -1108,8 +1036,6 @@ def capture_locked(root, directory):
         class QuietHandler(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
                 pass
-
-        from functools import partial
 
         handler = partial(QuietHandler, directory=str(export))
         with socketserver.TCPServer(("127.0.0.1", 0), handler) as server:
@@ -1178,8 +1104,6 @@ def capture_locked(root, directory):
             ):
                 raise ValueError("Missing rendered Godot version")
         if "pose" not in receipt:
-            from .framing import validate_frame
-
             validate_frame(scene.get("camera_frame"), receipt.get("framing"))
             validate_geometry_preview(scene, fallback)
         if receipt.get("all_views"):

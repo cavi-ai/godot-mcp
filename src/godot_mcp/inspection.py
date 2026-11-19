@@ -1,8 +1,7 @@
 """Source-bound Godot runtime inspection of self-contained GLB files."""
 
-import math
-
 from . import engine, review
+from .shapes import count, number, transform, vector
 
 REPORT_LIMIT = 1024 * 1024
 LIMITS = {"nodes": 256, "surfaces": 256, "bones": 256, "clips": 128}
@@ -11,29 +10,6 @@ TRIANGLES = 3
 
 def validate_glb(path):
     return review.read_glb(path, static_review=False)
-
-
-def count(value):
-    return type(value) is int and value >= 0
-
-
-def vector(value):
-    return (
-        isinstance(value, list)
-        and len(value) == 3
-        and all(type(n) in (int, float) and math.isfinite(n) for n in value)
-    )
-
-
-def transform(value):
-    return (
-        isinstance(value, dict)
-        and set(value) == {"origin", "basis"}
-        and vector(value["origin"])
-        and isinstance(value["basis"], list)
-        and len(value["basis"]) == 3
-        and all(vector(v) for v in value["basis"])
-    )
 
 
 def bounds(value):
@@ -146,8 +122,7 @@ def validate_report(report):
         or not known(c.get("player"))
         or not isinstance(c.get("name"), str)
         or not c["name"]
-        or type(c.get("duration")) not in (int, float)
-        or not math.isfinite(c["duration"])
+        or not number(c.get("duration"))
         or c["duration"] < 0
         or not count(c.get("tracks"))
         for c in clips

@@ -19,9 +19,11 @@
 - Pose reviews frame skinned meshes by their vertices at the selected time instead of bone origins with padding.
 - Inspection and motion reports give `units` as `metres`; motion reports replace `Godot scene units`.
 - Inspection counts surface vertices, indices and UV sets without copying mesh arrays.
+- The review scene lights the asset with a neutral grey sky for ambient light and reflections and uses AgX tonemapping; captured scene metadata records `renderer`.
 
 ### Fixed
 
+- Smooth metallic materials reflect the review sky instead of rendering black.
 - Inspection reports full-precision numbers; clip durations were rounded to 15 digits and could exceed the clip's length.
 - Malformed GLB JSON (a non-object document, NaN or non-object entries) is refused before any output is written.
 - Pose and motion requests for a missing clip, a time past the clip end or a zero-length clip are refused before Godot runs.

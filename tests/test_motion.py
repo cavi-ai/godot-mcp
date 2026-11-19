@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cavi_mcp_core.contracts import OperationUnknown
-from test_support import animated, textured_cubes
+from test_support import animated, missing_tools, textured_cubes
 
 from godot_mcp import motion, review
 
@@ -156,7 +156,10 @@ class MotionRequestTests(unittest.TestCase):
             (root / "asset.glb").write_bytes(animated([("clip", 1.0)]))
             engine = root / "engine"
             engine.write_bytes(b"engine")
-            with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
+            with (
+                patch.dict(os.environ, missing_tools(), clear=True),
+                self.assertRaises(ValueError),
+            ):
                 motion.inspect_motion(root, "asset.glb", "out", "/p", "clip", [0, 1])
             with patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}):
                 with self.assertRaises(ValueError):

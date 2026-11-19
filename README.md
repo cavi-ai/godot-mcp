@@ -18,7 +18,7 @@ Native inspection and capture require macOS or Linux, Python 3.15 or newer, [uv]
 uv tool install cavi-godot-mcp
 ```
 
-Configure your MCP client with the executable and absolute paths. Inspection needs only the workspace and Godot paths:
+Configure your MCP client with the executable and the absolute workspace path:
 
 ```json
 {
@@ -26,15 +26,16 @@ Configure your MCP client with the executable and absolute paths. Inspection nee
     "godot": {
       "command": "cavi-godot-mcp",
       "env": {
-        "CAVI_GAME_ART_WORKSPACE": "/absolute/path/to/workspace",
-        "CAVI_GODOT_BIN": "/absolute/path/to/godot"
+        "CAVI_GAME_ART_WORKSPACE": "/absolute/path/to/workspace"
       }
     }
   }
 }
 ```
 
-To capture a rendered view, also set `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_BIN` and `CAVI_NODE_BIN` to absolute paths. Use a single-threaded Web export template matching your Godot editor, headless Chromium with WebGL 2 support, and Node.js 22 or newer.
+Godot, Chromium and Node.js are found where they are installed: `/Applications/Godot.app`, `/Applications/Google Chrome.app` and `/opt/homebrew/bin/node`, then `godot`, `chromium` and `node` on `PATH`. Capture uses the single-threaded Web template (`web_nothreads_release.zip`) for the editor's version from Godot's export templates directory; install the export templates from the Godot editor. Capture needs Chromium with WebGL 2 support and Node.js 22 or newer.
+
+To use other files, set `CAVI_GODOT_BIN`, `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_BIN` or `CAVI_NODE_BIN` to an absolute path. A set variable always wins: when its file is missing, that tool is reported as not found. `godot_status` reports which tools are found.
 
 ## Review your asset
 

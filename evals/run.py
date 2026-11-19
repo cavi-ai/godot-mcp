@@ -115,7 +115,7 @@ def main():
         "CAVI_CHROMIUM_BIN",
         "CAVI_NODE_BIN",
     ):
-        env.pop(key, None)
+        env[key] = "/nonexistent/tool"
     version = subprocess.run(
         owned_exec.command([str(evaluator), "--version"], env=env),
         capture_output=True,

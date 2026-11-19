@@ -1,17 +1,9 @@
 """Source-bound engine evaluation of a named imported animation."""
 
 import itertools
-import json
 import math
-import shutil
-import tempfile
-from pathlib import Path
 
-from cavi_mcp_core import files
-from cavi_mcp_core.contracts import OperationUnknown
-
-from . import inspection, review
-from .config import GODOT, tools
+from . import engine, inspection, review
 
 REPORT_LIMIT = 4 * 1024 * 1024
 
@@ -151,112 +143,20 @@ def inspect_motion(root, source, directory, player, animation, normalized_times)
     src = review.source_glb(root, source)
     dest = review.new_output(root, directory)
     review.select_clip(inspection.validate_glb(src), animation)
-    engine = tools((GODOT,))[GODOT]
-    runtime = Path(__file__).parent / "runtime" / "motion.gd"
-    config = {
-        "player": player,
-        "animation": animation,
-        "normalized_times": normalized_times,
-    }
-    snapshot = {
-        "source_sha256": review.digest(src, review.LIMIT),
-        "engine_sha256": review.digest(engine),
-        "provider": review.provider_identity(),
-    }
-    dest.mkdir()
-    pending = dest / ".motion.pending"
-    project = None
-    try:
-        review.atomic_json(
-            dest / "owner.json", {"kind": "godot-motion-inspection", "source": source}
-        )
-        review.atomic_json(pending, {"kind": "motion_pending"})
-        review.atomic_json(
-            dest / "inputs.json",
-            {"source": source, "config": config, "inputs": snapshot},
-        )
-        project = Path(tempfile.mkdtemp(prefix=".motion-", dir=dest))
-        (project / "project.godot").write_text(
-            '[application]\nconfig/name="Motion inspection"\n'
-        )
-        shutil.copyfile(src, project / "subject.glb")
-        shutil.copyfile(runtime, project / "motion.gd")
-        review.atomic_json(project / "config.json", config)
-        if (
-            review.digest(project / "subject.glb", review.LIMIT)
-            != snapshot["source_sha256"]
-            or review.digest(project / "motion.gd")
-            != snapshot["provider"]["runtime"]["motion.gd"]
-            or json.loads(files.read_bytes(project / "config.json", 1024 * 1024))
-            != config
-        ):
-            raise ValueError("Motion inputs changed while copying")
-        review.run_owned(
-            [
-                str(engine),
-                "--headless",
-                "--path",
-                str(project),
-                "--script",
-                "res://motion.gd",
-            ],
-            120,
-            dest,
-            "godot",
-        )
-        if (
-            b"ERROR:" in (dest / "godot.stderr").read_bytes()
-            or b"ERROR:" in (dest / "godot.stdout").read_bytes()
-        ):
-            raise ValueError("Godot reported a motion inspection error")
-        report = validate_report(
-            json.loads(files.read_bytes(project / "report.json", REPORT_LIMIT)),
-            player,
-            animation,
-            normalized_times,
-        )
-        if (
-            review.digest(src, review.LIMIT) != snapshot["source_sha256"]
-            or review.digest(engine) != snapshot["engine_sha256"]
-            or review.provider_identity() != snapshot["provider"]
-            or review.digest(project / "subject.glb", review.LIMIT)
-            != snapshot["source_sha256"]
-            or review.digest(project / "motion.gd")
-            != snapshot["provider"]["runtime"]["motion.gd"]
-            or json.loads(files.read_bytes(project / "config.json", 1024 * 1024))
-            != config
-        ):
-            raise ValueError("Motion inspection inputs changed")
-        review.atomic_json(dest / "report.json", report)
-        result = {
-            "kind": "godot-motion-inspection",
-            "source": source,
-            "config": config,
-            "inputs": snapshot,
-            "report_sha256": review.digest(dest / "report.json", REPORT_LIMIT),
-            "report": report,
-        }
-        review.atomic_json(
-            dest / "receipt.json", {k: v for k, v in result.items() if k != "report"}
-        )
-        shutil.rmtree(project)
-        project = None
-        pending.unlink(missing_ok=True)
-        return result
-    except review.CleanupUnverified:
-        raise
-    except Exception as exc:
-        cleanup_error = None
-        if project is not None:
-            try:
-                shutil.rmtree(project)
-            except OSError as error:
-                cleanup_error = error
-        try:
-            pending.unlink(missing_ok=True)
-        except OSError as error:
-            cleanup_error = cleanup_error or error
-        raise OperationUnknown(
-            str(exc)
-            + (f"; output cleanup failed: {cleanup_error}" if cleanup_error else "")
-        ) from exc
+    return engine.run(
+        src,
+        dest,
+        source,
+        kind="godot-motion-inspection",
+        name="motion",
+        script="motion.gd",
+        settings={
+            "player": player,
+            "animation": animation,
+            "normalized_times": normalized_times,
+        },
+        report_limit=REPORT_LIMIT,
+        validate=lambda report: validate_report(
+            report, player, animation, normalized_times
+        ),
+    )

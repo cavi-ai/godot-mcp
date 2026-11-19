@@ -2,6 +2,13 @@ import json
 import struct
 import zlib
 
+from godot_mcp.config import REVIEW_TOOLS
+
+
+def missing_tools():
+    """Tool variables naming no file, so installed tools are not found instead."""
+    return dict.fromkeys(REVIEW_TOOLS, "/nonexistent/tool")
+
 
 def glb(extra):
     def chunk(kind, payload):

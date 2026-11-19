@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from test_support import glb
+from test_support import glb, missing_tools
 
 from godot_mcp.review import inspect, prepare
 
@@ -311,6 +311,54 @@ class DocumentTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_installed_tools_are_found_without_configuration(self):
+        import os
+        from unittest.mock import patch
+
+        from godot_mcp import config
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            commands = root / "bin"
+            commands.mkdir()
+            for name, body in (
+                ("godot", "echo 4.7.2.stable.official.abc"),
+                ("chromium", "exit 0"),
+                ("node", "exit 0"),
+            ):
+                (commands / name).write_text("#!/bin/sh\n" + body + "\n")
+                (commands / name).chmod(0o755)
+            templates = root / "templates"
+            for version in ("4.7.2.stable", "4.7.1.stable", "4.7.20.stable"):
+                (templates / version).mkdir(parents=True)
+                (templates / version / config.WEB_TEMPLATE).write_bytes(b"zip")
+            missing = root / "missing"
+            defaults = {
+                name: (missing, command)
+                for name, (_, command) in config.EXECUTABLES.items()
+            }
+            with (
+                patch.dict(os.environ, {"PATH": str(commands)}, clear=True),
+                patch.dict(config.EXECUTABLES, defaults),
+                patch("godot_mcp.config.export_templates", return_value=templates),
+            ):
+                self.assertEqual(
+                    config.tools(),
+                    {
+                        config.GODOT: (commands / "godot").resolve(),
+                        config.TEMPLATE: (
+                            templates / "4.7.2.stable" / config.WEB_TEMPLATE
+                        ).resolve(),
+                        config.CHROMIUM: (commands / "chromium").resolve(),
+                        config.NODE: (commands / "node").resolve(),
+                    },
+                )
+                with (
+                    patch.dict(os.environ, {config.NODE: str(missing)}),
+                    self.assertRaisesRegex(ValueError, "set CAVI_NODE_BIN$"),
+                ):
+                    config.tools()
+
     def test_captured_review_without_tool_configuration_is_rejected(self):
         import json
         import os
@@ -331,7 +379,7 @@ class ConfigurationTests(unittest.TestCase):
             )
             (root / "review" / "review.json").write_text(json.dumps(receipt))
             with (
-                patch.dict(os.environ, {}, clear=True),
+                patch.dict(os.environ, missing_tools(), clear=True),
                 self.assertRaisesRegex(ValueError, "CAVI_NODE_BIN"),
             ):
                 inspect(root, "review")
@@ -339,13 +387,19 @@ class ConfigurationTests(unittest.TestCase):
 
 class CaptureTests(unittest.TestCase):
     def test_missing_tools_do_not_replace_prepared_review(self):
+        import os
+        from unittest.mock import patch
+
         from godot_mcp.review import capture
 
         with TemporaryDirectory() as d:
             root = Path(d)
             (root / "mesh.glb").write_bytes(glb({}))
             prepare(root, "mesh.glb", "review")
-            with self.assertRaises((KeyError, ValueError, FileNotFoundError)):
+            with (
+                patch.dict(os.environ, missing_tools()),
+                self.assertRaises((KeyError, ValueError, FileNotFoundError)),
+            ):
                 capture(root, "review")
             self.assertEqual(inspect(root, "review")["state"], "prepared")
 

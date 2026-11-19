@@ -8,7 +8,7 @@ from pathlib import Path
 from cavi_mcp_core import owned_exec
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from test_support import textured_cubes
+from test_support import missing_tools, textured_cubes
 
 
 class UnknownOutcomeTests(unittest.TestCase):
@@ -72,14 +72,7 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "asset.glb").write_bytes(textured_cubes())
-            env = dict(os.environ, CAVI_GAME_ART_WORKSPACE=str(root))
-            for key in (
-                "CAVI_GODOT_BIN",
-                "CAVI_GODOT_WEB_TEMPLATE",
-                "CAVI_CHROMIUM_BIN",
-                "CAVI_NODE_BIN",
-            ):
-                env.pop(key, None)
+            env = dict(os.environ, CAVI_GAME_ART_WORKSPACE=str(root), **missing_tools())
             command = owned_exec.command(
                 [sys.executable, "-m", "godot_mcp.server"], env=env
             )

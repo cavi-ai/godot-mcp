@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from test_support import glb
+from test_support import glb, missing_tools
 
 from godot_mcp import inspection
 
@@ -38,7 +38,10 @@ class InspectionTests(unittest.TestCase):
                     inspection.validate_glb(p)
 
     def test_missing_engine_and_escape_are_rejected_before_output(self):
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(os.environ, missing_tools(), clear=True),
+        ):
             root = Path(d)
             (root / "asset.glb").write_bytes(glb({}))
             for source in ("asset.glb", "../outside.glb"):

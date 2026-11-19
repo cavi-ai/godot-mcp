@@ -1,6 +1,5 @@
 """MCP tools for reviewing static Godot assets."""
 
-import os
 from functools import partial
 from typing import Annotated, Any, Literal
 
@@ -35,8 +34,8 @@ async def call(function, *args):
 
 @mcp.tool(annotations=READ_ONLY)
 async def godot_status() -> dict[str, bool]:
-    """Report whether each review dependency is configured without launching it."""
-    return {name: bool(os.environ.get(name)) for name in config.REVIEW_TOOLS}
+    """Report whether each review dependency is set or installed."""
+    return await call(config.available)
 
 
 @mcp.tool(annotations=WRITES)

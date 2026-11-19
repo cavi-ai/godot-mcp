@@ -11,6 +11,23 @@ from mcp.client.stdio import stdio_client
 from test_support import textured_cubes
 
 
+class UnknownOutcomeTests(unittest.TestCase):
+    def test_unknown_outcomes_point_at_the_owned_output(self):
+        from cavi_mcp_core.contracts import OperationUnknown
+
+        from godot_mcp.server import mcp
+
+        for name, action in (
+            ("godot_review_capture", "godot_review_inspect"),
+            ("godot_asset_inspect", "inspect_application_and_outputs"),
+            ("godot_motion_inspect", "inspect_application_and_outputs"),
+            ("godot_review_prepare", "inspect_application_and_outputs"),
+        ):
+            error = mcp.failure(name, OperationUnknown("uncertain")).structured_content
+            self.assertEqual(error["error"]["outcome"], "unknown", name)
+            self.assertEqual(error["error"]["next_action"], action, name)
+
+
 class McpContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_validation_and_recovery(self):
         with tempfile.TemporaryDirectory() as d:

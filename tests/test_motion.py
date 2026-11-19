@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cavi_mcp_core.contracts import OperationUnknown
-from test_support import textured_cubes
+from test_support import animated, textured_cubes
 
 from godot_mcp import motion, review
 
@@ -127,10 +127,33 @@ class MotionRequestTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 motion.validate_report({**report, "bones": bad}, "/p", "walk", [0, 1])
 
+    def test_missing_or_empty_clip_is_rejected_before_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            engine = root / "engine"
+            engine.write_bytes(b"engine")
+            (root / "static.glb").write_bytes(textured_cubes())
+            (root / "clips.glb").write_bytes(animated([("clip", 1.0), ("pose", 0.0)]))
+            with (
+                patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
+                patch.object(review, "run_owned", side_effect=AssertionError("ran")),
+            ):
+                for directory, source, animation in (
+                    ("static", "static.glb", "clip"),
+                    ("unknown", "clips.glb", "walk"),
+                    ("empty", "clips.glb", "pose"),
+                ):
+                    with self.subTest(directory=directory):
+                        with self.assertRaises(ValueError):
+                            motion.inspect_motion(
+                                root, source, directory, "/p", animation, [0, 1]
+                            )
+                        self.assertFalse((root / directory).exists())
+
     def test_path_missing_engine_and_pending_cleanup(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            (root / "asset.glb").write_bytes(textured_cubes())
+            (root / "asset.glb").write_bytes(animated([("clip", 1.0)]))
             engine = root / "engine"
             engine.write_bytes(b"engine")
             with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
@@ -161,7 +184,7 @@ class MotionRequestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             asset, engine = root / "asset.glb", root / "engine"
-            asset.write_bytes(textured_cubes())
+            asset.write_bytes(animated([("clip", 1.0)]))
             engine.write_bytes(b"engine")
             runtime = Path(motion.__file__).parent / "runtime/motion.gd"
             identity = {"runtime": {"motion.gd": review.digest(runtime)}}

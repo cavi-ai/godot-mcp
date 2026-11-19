@@ -3,7 +3,6 @@
 import itertools
 import json
 import math
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -12,6 +11,7 @@ from cavi_mcp_core import files
 from cavi_mcp_core.contracts import OperationUnknown
 
 from . import inspection, review
+from .config import GODOT, tools
 
 REPORT_LIMIT = 4 * 1024 * 1024
 
@@ -152,13 +152,8 @@ def inspect_motion(root, source, directory, player, animation, normalized_times)
     dest = review.inside(root, directory)
     if not src.is_file() or src.suffix.lower() != ".glb":
         raise ValueError("Source must be a GLB file")
-    inspection.validate_glb(src)
-    configured = os.environ.get("CAVI_GODOT_BIN")
-    if not configured:
-        raise ValueError("CAVI_GODOT_BIN is required")
-    engine = Path(configured).resolve()
-    if not engine.is_file():
-        raise ValueError("Godot executable must be a file")
+    review.select_clip(inspection.validate_glb(src), animation)
+    engine = tools((GODOT,))[GODOT]
     runtime = Path(__file__).parent / "runtime" / "motion.gd"
     config = {
         "player": player,

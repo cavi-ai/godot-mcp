@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import stat
 import struct
 import tempfile
@@ -13,8 +14,12 @@ from pathlib import Path
 from cavi_mcp_core import files, journal, owned_exec, processes
 from cavi_mcp_core.contracts import OperationUnknown
 
+from . import config
+
 LIMIT = 64 * 1024 * 1024
 ARTIFACT_LIMIT = 256 * 1024 * 1024
+PLAIN_CLIP = re.compile(r"[A-Za-z0-9 _-]+")
+CLIP_TOLERANCE = 1e-4
 
 
 class CleanupUnverified(OperationUnknown):
@@ -71,12 +76,14 @@ def read_glb(path, *, static_review=True):
     n, kind = struct.unpack_from("<I4s", raw, 12)
     if kind != b"JSON" or n % 4 or n + 20 > len(raw):
         raise ValueError("Invalid GLB JSON chunk")
-    document = json.loads(raw[20 : 20 + n])
+    document = files.parse_json(raw[20 : 20 + n])
+    if not isinstance(document, dict):
+        raise ValueError("Invalid GLB JSON chunk")  # noqa: TRY004 - malformed input
     if static_review and (document.get("skins") or document.get("animations")):
         raise ValueError("Only static GLB assets are supported")
     if not document.get("meshes") or not document.get("nodes"):
         raise ValueError("GLB needs mesh nodes")
-    buffers = document.get("buffers", [])
+    buffers = entries(document, "buffers")
     if len(buffers) != 1 or "uri" in buffers[0]:
         raise ValueError("Buffers must be embedded")
     position = 20 + n
@@ -90,7 +97,7 @@ def read_glb(path, *, static_review=True):
         or buffers[0]["byteLength"] > binary_length
     ):
         raise ValueError("Invalid binary buffer length")
-    views = document.get("bufferViews", [])
+    views = entries(document, "bufferViews")
     for view in views:
         start, size = view.get("byteOffset", 0), view.get("byteLength")
         if (
@@ -102,7 +109,7 @@ def read_glb(path, *, static_review=True):
             or start + size > buffers[0]["byteLength"]
         ):
             raise ValueError("Invalid embedded buffer view")
-    images = document.get("images", [])
+    images = entries(document, "images")
     if any(
         "uri" in image
         or type(image.get("bufferView")) is not int
@@ -111,14 +118,17 @@ def read_glb(path, *, static_review=True):
         for image in images
     ):
         raise ValueError("Images must be embedded PNG or JPEG")
-    for texture in document.get("textures", []):
+    textures = entries(document, "textures")
+    for texture in textures:
         if type(texture.get("source")) is not int or not 0 <= texture["source"] < len(
             images
         ):
             raise ValueError("Texture must reference an embedded image")
-    texture_count = len(document.get("textures", []))
-    for material in document.get("materials", []):
+    texture_count = len(textures)
+    for material in entries(document, "materials"):
         pbr = material.get("pbrMetallicRoughness", {})
+        if not isinstance(pbr, dict):
+            raise ValueError("Invalid material")  # noqa: TRY004 - malformed input
         slots = [
             pbr.get("baseColorTexture"),
             pbr.get("metallicRoughnessTexture"),
@@ -134,6 +144,83 @@ def read_glb(path, *, static_review=True):
             ):
                 raise ValueError("Invalid material texture reference")
     return document
+
+
+def entries(document, key):
+    value = document.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(v, dict) for v in value):
+        raise ValueError(f"GLB {key} must be a list of objects")
+    return value
+
+
+def member(values, index):
+    if (
+        isinstance(values, list)
+        and type(index) is int
+        and 0 <= index < len(values)
+        and isinstance(values[index], dict)
+    ):
+        return values[index]
+    return None
+
+
+def clip_lengths(document):
+    """Each animation's name and length (its latest sampler input), or None."""
+    clips = []
+    for animation in entries(document, "animations"):
+        channels, times = animation.get("channels"), []
+        for channel in channels if isinstance(channels, list) else []:
+            sampler = member(
+                animation.get("samplers"),
+                channel.get("sampler") if isinstance(channel, dict) else None,
+            )
+            accessor = member(
+                document.get("accessors"), sampler.get("input") if sampler else None
+            )
+            bound = accessor.get("max") if accessor else None
+            if (
+                not isinstance(bound, list)
+                or len(bound) != 1
+                or type(bound[0]) not in (int, float)
+                or not math.isfinite(bound[0])
+            ):
+                times = []
+                break
+            times.append(bound[0])
+        name = animation.get("name")
+        clips.append(
+            (name if isinstance(name, str) else None, max(times, default=None))
+        )
+    return clips
+
+
+def select_clip(document, animation, seconds=None):
+    """Refuse a clip, time or length Godot is certain to refuse.
+
+    Godot renames clips with punctuation, loop or cycle suffixes or duplicate names,
+    so names and per-clip lengths are checked only when every clip keeps its name.
+    """
+    clips = clip_lengths(document)
+    if not clips:
+        raise ValueError("The GLB has no animations")
+    names = [name for name, _ in clips]
+    kept = len(set(names)) == len(names) and all(
+        name is not None
+        and PLAIN_CLIP.fullmatch(name)
+        and "loop" not in name.lower()
+        and "cycle" not in name.lower()
+        for name in names
+    )
+    if kept and animation not in names:
+        raise ValueError("Animation not found in the GLB: " + animation)
+    lengths = [length for name, length in clips if not kept or name == animation]
+    length = None if None in lengths else max(lengths)
+    if length is None:
+        return
+    if seconds is not None and seconds > length + CLIP_TOLERANCE:
+        raise ValueError("Pose time is after the end of the animation")
+    if kept and length <= 0:
+        raise ValueError("Animation duration must be positive")
 
 
 def geometry_only(document):
@@ -248,6 +335,8 @@ def prepare(
     document = read_glb(src, static_review=pose is None)
     if pose is not None and not document.get("animations"):
         raise ValueError("Pose review requires an animated GLB")
+    if pose is not None:
+        select_clip(document, pose["animation"], pose["time_seconds"])
     source_sha256 = digest(src, LIMIT)
     dest.mkdir(parents=False, exist_ok=False)
     receipt = {
@@ -383,23 +472,13 @@ def inspect(root, directory, include_status=True):
         raise ValueError("Source changed")
     if receipt.get("state") == "captured":
         inputs = receipt.get("inputs")
-        names = {
-            "CAVI_GODOT_BIN",
-            "CAVI_GODOT_WEB_TEMPLATE",
-            "CAVI_CHROMIUM_BIN",
-            "CAVI_NODE_BIN",
-        }
         if (
             not isinstance(inputs, dict)
             or not isinstance(inputs.get("tools"), dict)
-            or set(inputs["tools"]) != names
+            or set(inputs["tools"]) != set(config.REVIEW_TOOLS)
         ):
             raise ValueError("Invalid review inputs")
-        tools = {
-            name: Path(os.environ[name]).resolve(strict=True)
-            for name in receipt["inputs"]["tools"]
-        }
-        if input_snapshot(root, receipt, tools) != receipt["inputs"]:
+        if input_snapshot(root, receipt, config.tools()) != receipt["inputs"]:
             raise ValueError("Review input changed")
     for relative, expected in receipt.get("artifacts", {}).items():
         path = (dest / relative).resolve()
@@ -854,15 +933,7 @@ def capture(root, directory):
         marker = dest / ".capture.pending"
         if marker.exists():
             raise CleanupUnverified("Previous capture cleanup is unverified")
-        required = (
-            "CAVI_GODOT_BIN",
-            "CAVI_GODOT_WEB_TEMPLATE",
-            "CAVI_CHROMIUM_BIN",
-            "CAVI_NODE_BIN",
-        )
-        missing = [name for name in required if not os.environ.get(name)]
-        if missing:
-            raise ValueError("Missing review configuration: " + ", ".join(missing))
+        config.tools()
         atomic_json(marker, {"kind": "capture_pending"})
         verified = False
         try:
@@ -897,17 +968,7 @@ def capture_locked(root, directory):
     dest = inside(root, directory)
     if receipt["state"] != "prepared":
         raise ValueError("Review is not prepared")
-    tools = {
-        name: Path(os.environ[name]).resolve(strict=True)
-        for name in (
-            "CAVI_GODOT_BIN",
-            "CAVI_GODOT_WEB_TEMPLATE",
-            "CAVI_CHROMIUM_BIN",
-            "CAVI_NODE_BIN",
-        )
-    }
-    if any(not p.is_file() for p in tools.values()):
-        raise ValueError("Configured tools must be files")
+    tools = config.tools()
     runtime = Path(__file__).parent / "runtime"
     inputs = input_snapshot(root, receipt, tools)
     attempts = dest / "attempts"

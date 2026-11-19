@@ -278,6 +278,65 @@ class ReviewTests(unittest.TestCase):
                 inspect(root, "review")
 
 
+class DocumentTests(unittest.TestCase):
+    def test_malformed_json_chunk_is_rejected_before_output(self):
+        import json
+
+        from test_support import raw_glb
+
+        valid = {
+            "asset": {"version": "2.0"},
+            "nodes": [{"mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}
+            ],
+            "buffers": [{"byteLength": 36}],
+            "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        }
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "valid.glb").write_bytes(raw_glb(json.dumps(valid).encode()))
+            self.assertEqual(prepare(root, "valid.glb", "valid")["state"], "prepared")
+            for name, document in (
+                ("list", b"[]"),
+                ("nan", json.dumps({**valid, "extras": float("nan")}).encode()),
+                ("views", json.dumps({**valid, "bufferViews": [1]}).encode()),
+                ("buffers", json.dumps({**valid, "buffers": [1]}).encode()),
+            ):
+                (root / f"{name}.glb").write_bytes(raw_glb(document))
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    prepare(root, f"{name}.glb", name)
+                self.assertFalse((root / name).exists())
+
+
+class ConfigurationTests(unittest.TestCase):
+    def test_captured_review_without_tool_configuration_is_rejected(self):
+        import json
+        import os
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review")
+            names = (
+                "CAVI_GODOT_BIN",
+                "CAVI_GODOT_WEB_TEMPLATE",
+                "CAVI_CHROMIUM_BIN",
+                "CAVI_NODE_BIN",
+            )
+            receipt.update(
+                state="captured", inputs={"tools": dict.fromkeys(names, "recorded")}
+            )
+            (root / "review" / "review.json").write_text(json.dumps(receipt))
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(ValueError, "CAVI_NODE_BIN"),
+            ):
+                inspect(root, "review")
+
+
 class CaptureTests(unittest.TestCase):
     def test_missing_tools_do_not_replace_prepared_review(self):
         from godot_mcp.review import capture

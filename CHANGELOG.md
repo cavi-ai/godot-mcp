@@ -16,6 +16,7 @@
 - The review camera distance fits the asset's bounding sphere to the field of view, with no minimum size, and the clip planes follow it; the three-quarter view is at 45°.
 - Captured scene metadata records `camera_position` and `camera_clip`; the review scene prints its metadata when run outside a browser.
 - The scale bar is the largest power of ten that fits the asset's bottom front edge instead of a fixed 1 m bar in front of it; `scale_bar` records its length and ends.
+- Pose reviews frame skinned meshes by their vertices at the selected time instead of bone origins with padding.
 
 ### Fixed
 

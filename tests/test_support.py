@@ -229,3 +229,82 @@ def textured_cubes(count=1, slide=None, size=1.0):
         + struct.pack("<I4s", len(binary), b"BIN\0")
         + binary
     )
+
+
+def skinned_cube(lift):
+    """A 1 m cube skinned to one bone; the one-second clip "Lift" raises the bone by ``lift``."""
+    corners = [(x, y, z) for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)]
+    quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4)]
+    quads.append((1, 5, 7, 3))
+    parts = [
+        struct.pack("<24f", *(c for corner in corners for c in corner)),
+        struct.pack("<36H", *(i for a, b, c, d in quads for i in (a, b, c, a, c, d))),
+        bytes(32),
+        struct.pack("<32f", *[1, 0, 0, 0] * 8),
+        struct.pack("<16f", 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
+        struct.pack("<2f", 0, 1),
+        struct.pack("<6f", 0, 0, 0, 0, lift, 0),
+    ]
+    views = []
+    for part in parts:
+        offset = sum(view["byteLength"] for view in views)
+        views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(part)})
+    kinds = [
+        (5126, 8, "VEC3"),
+        (5123, 36, "SCALAR"),
+        (5121, 8, "VEC4"),
+        (5126, 8, "VEC4"),
+        (5126, 1, "MAT4"),
+        (5126, 2, "SCALAR"),
+        (5126, 2, "VEC3"),
+    ]
+    accessors = [
+        {"bufferView": i, "componentType": component, "count": count, "type": kind}
+        for i, (component, count, kind) in enumerate(kinds)
+    ]
+    accessors[0] |= {"min": [-0.5] * 3, "max": [0.5] * 3}
+    accessors[5] |= {"min": [0], "max": [1]}
+    binary = b"".join(parts)
+    raw = json.dumps(
+        {
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": [0, 1]}],
+            "nodes": [{"name": "Body", "mesh": 0, "skin": 0}, {"name": "Bone"}],
+            "meshes": [
+                {
+                    "primitives": [
+                        {
+                            "attributes": {
+                                "POSITION": 0,
+                                "JOINTS_0": 2,
+                                "WEIGHTS_0": 3,
+                            },
+                            "indices": 1,
+                        }
+                    ]
+                }
+            ],
+            "skins": [{"joints": [1], "inverseBindMatrices": 4}],
+            "animations": [
+                {
+                    "name": "Lift",
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 1, "path": "translation"}}
+                    ],
+                    "samplers": [{"input": 5, "output": 6}],
+                }
+            ],
+            "accessors": accessors,
+            "buffers": [{"byteLength": len(binary)}],
+            "bufferViews": views,
+        }
+    ).encode()
+    raw += b" " * (-len(raw) % 4)
+    return (
+        struct.pack("<4sII", b"glTF", 2, 28 + len(raw) + len(binary))
+        + struct.pack("<I4s", len(raw), b"JSON")
+        + raw
+        + struct.pack("<I4s", len(binary), b"BIN\0")
+        + binary
+    )

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_support import textured_cubes
+from test_support import skinned_cube, textured_cubes
 
 from godot_mcp import config, inspection, motion, review
 
@@ -79,7 +79,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue((output / "receipt.json").is_file())
         self.assertFalse((output / ".motion.pending").exists())
 
-    def review_scene(self, source, view):
+    def review_scene(self, source, view, pose=None):
         """The metadata the review scene reports when run headless on ``source``."""
         project = self.root / "review"
         project.mkdir()
@@ -87,9 +87,13 @@ class EngineTests(unittest.TestCase):
         for name in ("project.godot", "main.tscn"):
             shutil.copyfile(runtime / name, project / name)
         (project / "subject.glb").write_bytes(source)
+        selection = {"view": view}
+        if pose is not None:
+            (project / "pose.json").write_text(json.dumps(pose))
+            selection["pose"] = pose
         template = (runtime / "main.gd").read_text()
         (project / "main.gd").write_text(
-            review.render_script(template, {"view": view}, fallback=False)
+            review.render_script(template, selection, fallback=False)
         )
         godot = str(config.tools((config.GODOT,))[config.GODOT])
         base = [godot, "--headless", "--path", str(project)]
@@ -134,6 +138,19 @@ class EngineTests(unittest.TestCase):
             for value, lower, upper in zip(point, low, high):
                 self.assertLessEqual(lower - 1e-6, value)
                 self.assertLessEqual(value, upper + 1e-6)
+
+    def test_posed_bounds_follow_the_skinned_mesh(self):
+        pose = {
+            "player": "/subject/AnimationPlayer",
+            "animation": "Lift",
+            "time_seconds": 1.0,
+        }
+        scene = self.review_scene(skinned_cube(lift=2.0), "three-quarter", pose)
+        self.assertEqual(scene["pose"]["time_seconds"], 1.0)
+        for actual, expected in zip(
+            scene["bounds_origin"] + scene["bounds_size"], [-0.5, 1.5, -0.5, 1, 1, 1]
+        ):
+            self.assertAlmostEqual(actual, expected, places=4)
 
 
 if __name__ == "__main__":

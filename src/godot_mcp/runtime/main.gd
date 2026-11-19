@@ -29,7 +29,6 @@ func _ready():
  var model = load("res://subject.glb").instantiate()
  add_child(model)
  var pose_metadata = null
- var pose_points: Array[Vector3] = []
  if REQUIRE_POSE:
   if not FileAccess.file_exists("res://pose.json"):
    push_error("Pose configuration missing")
@@ -56,7 +55,7 @@ func _ready():
   initial_pose_time = float(selected.time_seconds)
   pose_duration = clip.length
   var bones = []
-  if not collect_pose(model, "", bones, pose_points):
+  if not collect_pose(model, "", bones):
    push_error("Pose skeleton exceeds limit")
    return
   pose_metadata = {"player": selected.player, "animation": str(selected_player.assigned_animation),
@@ -110,21 +109,12 @@ void fragment() {
  var bounds: AABB
  var first = true
  for mesh in meshes:
-  var b = mesh.global_transform * mesh.get_aabb()
+  var local = mesh.get_aabb()
+  if REQUIRE_POSE and mesh.skin != null:
+   local = posed_aabb(mesh)
+  var b = mesh.global_transform * local
   bounds = b if first else bounds.merge(b)
   first = false
- if REQUIRE_POSE and not pose_points.is_empty():
-  var pose_bounds = AABB(pose_points[0], Vector3.ZERO)
-  for point in pose_points:
-   pose_bounds = pose_bounds.expand(point)
-  var padding = 0.05
-  for mesh in meshes:
-   var mesh_bounds = mesh.global_transform * mesh.get_aabb()
-   if mesh.skin == null:
-    pose_bounds = pose_bounds.merge(mesh_bounds)
-   else:
-    padding = max(padding, mesh_bounds.size.length() * 0.2)
-  bounds = pose_bounds.grow(padding)
  center = bounds.get_center()
  if bounds.size.length() == 0.0:
   push_error("Subject has no extent")
@@ -320,7 +310,7 @@ func find_player(node: Node, parent_path: String, wanted: String) -> AnimationPl
 func vector(v: Vector3) -> Array:
  return [v.x, v.y, v.z]
 
-func collect_pose(node: Node, parent_path: String, bones: Array, points: Array[Vector3]) -> bool:
+func collect_pose(node: Node, parent_path: String, bones: Array) -> bool:
  var path = parent_path + "/" + str(node.name)
  if node is Skeleton3D:
   if bones.size() + node.get_bone_count() > 256:
@@ -328,13 +318,42 @@ func collect_pose(node: Node, parent_path: String, bones: Array, points: Array[V
   node.force_update_all_bone_transforms()
   for i in node.get_bone_count():
    var t = node.global_transform * node.get_bone_global_pose(i)
-   points.append(t.origin)
    bones.append({"skeleton": path, "index": i, "name": node.get_bone_name(i),
     "origin": vector(t.origin), "basis": [vector(t.basis.x), vector(t.basis.y), vector(t.basis.z)]})
  for child in node.get_children():
-  if not collect_pose(child, path, bones, points):
+  if not collect_pose(child, path, bones):
    return false
  return true
+
+func posed_aabb(mesh: MeshInstance3D) -> AABB:
+ # The engine's skinning on the CPU; bake_mesh_from_current_skeleton_pose reads a rendering
+ # server skeleton, which headless runs do not have.
+ var skeleton := mesh.get_node(mesh.skeleton) as Skeleton3D
+ var binds: Array[Transform3D] = []
+ for i in mesh.skin.get_bind_count():
+  var bone = mesh.skin.get_bind_bone(i)
+  if mesh.skin.get_bind_name(i) != &"":
+   bone = skeleton.find_bone(mesh.skin.get_bind_name(i))
+  binds.append(skeleton.get_bone_global_pose(bone) * mesh.skin.get_bind_pose(i))
+ var box: AABB
+ var first = true
+ for surface in mesh.mesh.get_surface_count():
+  var arrays = mesh.mesh.surface_get_arrays(surface)
+  var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+  var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+  var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+  var influences = bones.size() / vertices.size() if not vertices.is_empty() else 0
+  for v in vertices.size():
+   var point = vertices[v]
+   if influences > 0:
+    point = Vector3.ZERO
+    for k in influences:
+     var weight = weights[v * influences + k]
+     if weight > 0.0:
+      point += binds[bones[v * influences + k]] * vertices[v] * weight
+   box = AABB(point, Vector3.ZERO) if first else box.expand(point)
+   first = false
+ return box
 
 func collect_meshes(node: Node, meshes: Array[MeshInstance3D]):
  if node is MeshInstance3D and node.mesh:

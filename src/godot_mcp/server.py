@@ -11,19 +11,16 @@ from cavi_mcp_core.server import READ_ONLY, Server
 from mcp.types import ToolAnnotations
 from pydantic import Field, StrictBool
 
-from . import inspection, motion, review
+from . import config, inspection, motion, review
 from .framing import Framing
 from .pose import Pose
 
 
 class GodotServer(Server):
     def failure(self, name, error):
-        action = (
-            "godot_review_inspect"
-            if name == "godot_review_capture"
-            else "inspect_inputs"
-        )
-        return failure(name, error, unknown_next_action=action)
+        if name == "godot_review_capture":
+            return failure(name, error, unknown_next_action="godot_review_inspect")
+        return failure(name, error)
 
 
 mcp = GodotServer("godot-asset-review", package="cavi-godot-mcp")
@@ -46,15 +43,7 @@ async def call(function, *args):
 @mcp.tool(annotations=READ_ONLY)
 async def godot_status() -> dict[str, bool]:
     """Report whether each review dependency is configured without launching it."""
-    return {
-        name: bool(os.environ.get(name))
-        for name in (
-            "CAVI_GODOT_BIN",
-            "CAVI_GODOT_WEB_TEMPLATE",
-            "CAVI_CHROMIUM_BIN",
-            "CAVI_NODE_BIN",
-        )
-    }
+    return {name: bool(os.environ.get(name)) for name in config.REVIEW_TOOLS}
 
 
 @mcp.tool(annotations=WRITES)

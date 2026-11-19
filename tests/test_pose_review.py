@@ -46,6 +46,43 @@ class PoseReviewTests(unittest.TestCase):
                 review.prepare(self.root, "animated.glb", "bad", pose=pose)
             self.assertFalse((self.root / "bad").exists())
 
+    def test_pose_outside_named_clips_is_rejected_before_output(self):
+        from test_support import animated
+
+        (self.root / "clips.glb").write_bytes(animated([("Walk", 2.0), ("Run", 0.5)]))
+        for pose in (
+            {**self.pose, "animation": "Jump"},
+            {**self.pose, "animation": "Walk", "time_seconds": 2.5},
+            {**self.pose, "animation": "Run", "time_seconds": 1.0},
+        ):
+            with self.subTest(pose=pose), self.assertRaises(ValueError):
+                review.prepare(self.root, "clips.glb", "bad", pose=pose)
+            self.assertFalse((self.root / "bad").exists())
+        for directory, pose in (
+            ("end", {**self.pose, "animation": "Walk", "time_seconds": 2.0}),
+            ("run", {**self.pose, "animation": "Run", "time_seconds": 0.5}),
+        ):
+            self.assertEqual(
+                review.prepare(self.root, "clips.glb", directory, pose=pose)["pose"],
+                pose,
+            )
+
+    def test_renamed_clips_only_bound_pose_time_by_longest_clip(self):
+        from test_support import animated
+
+        (self.root / "renamed.glb").write_bytes(
+            animated([("Walk.001", 2.0), ("Idle_loop", 1.0), (None, 0.5)])
+        )
+        pose = {**self.pose, "animation": "Walk001", "time_seconds": 1.5}
+        self.assertEqual(
+            review.prepare(self.root, "renamed.glb", "renamed", pose=pose)["pose"], pose
+        )
+        with self.assertRaises(ValueError):
+            review.prepare(
+                self.root, "renamed.glb", "late", pose={**pose, "time_seconds": 2.5}
+            )
+        self.assertFalse((self.root / "late").exists())
+
     def test_pose_metadata_must_match_actual_scene(self):
         metadata = {
             "player": self.pose["player"],

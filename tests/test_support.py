@@ -50,6 +50,44 @@ def glb(extra):
     )
 
 
+def animated(clips):
+    """A triangle with one clip per (name, length); length is the sampler input max."""
+    accessors = [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}]
+    animations = []
+    for name, length in clips:
+        accessors.append(
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 1,
+                "type": "SCALAR",
+                "min": [0],
+                "max": [length],
+            }
+        )
+        animation = {
+            "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}],
+            "samplers": [{"input": len(accessors) - 1, "output": 0}],
+        }
+        if name is not None:
+            animation["name"] = name
+        animations.append(animation)
+    return glb({"accessors": accessors, "animations": animations})
+
+
+def raw_glb(document):
+    """A GLB whose JSON chunk holds ``document`` bytes as given."""
+    document += b" " * (-len(document) % 4)
+    binary = b"\0" * 36
+    return (
+        struct.pack("<4sII", b"glTF", 2, 28 + len(document) + len(binary))
+        + struct.pack("<I4s", len(document), b"JSON")
+        + document
+        + struct.pack("<I4s", len(binary), b"BIN\0")
+        + binary
+    )
+
+
 def textured_cubes(count=1):
     """A small embedded-texture fixture; multiple nodes share one cube mesh."""
 

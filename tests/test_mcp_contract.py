@@ -96,6 +96,18 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                         "godot_review_capture",
                     },
                 )
+                for name, fields in (
+                    ("godot_status", {"CAVI_GODOT_BIN", "CAVI_NODE_BIN"}),
+                    ("godot_review_prepare", {"source_sha256", "state", "view"}),
+                    ("godot_review_inspect", {"state", "cleanup_pending"}),
+                    ("godot_review_capture", {"artifacts", "bundle", "state"}),
+                    ("godot_asset_inspect", {"inputs", "report", "report_sha256"}),
+                    ("godot_motion_inspect", {"config", "report", "report_sha256"}),
+                ):
+                    schema = tools[name].output_schema or {}
+                    self.assertLessEqual(
+                        fields, set(schema.get("properties", {})), name
+                    )
                 for name, tool in tools.items():
                     self.assertFalse(
                         tool.input_schema.get("additionalProperties", True), name

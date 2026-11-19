@@ -95,8 +95,11 @@ def raw_glb(document):
     )
 
 
-def textured_cubes(count=1):
-    """A small embedded-texture fixture; multiple nodes share one cube mesh."""
+def textured_cubes(count=1, slide=None):
+    """A small embedded-texture fixture; multiple nodes share one cube mesh.
+
+    ``slide`` names a one-second clip moving the first cube from x = 0 to x = 1.
+    """
 
     def chunk(kind, payload):
         return (
@@ -132,6 +135,11 @@ def textured_cubes(count=1):
     uv = struct.pack("<48f", *uvs)
     ind = struct.pack("<36H", *indices)
     binary = pos + uv + ind + png
+    keys = len(binary) + -len(binary) % 4
+    if slide is not None:
+        binary += b"\0" * (keys - len(binary)) + struct.pack(
+            "<8f", 0, 1, 0, 0, 0, 1, 0, 0
+        )
     data = {
         "asset": {"version": "2.0"},
         "scene": 0,
@@ -185,6 +193,31 @@ def textured_cubes(count=1):
             {"bufferView": 2, "componentType": 5123, "count": 36, "type": "SCALAR"},
         ],
     }
+    if slide is not None:
+        data["bufferViews"] += [
+            {"buffer": 0, "byteOffset": keys, "byteLength": 8},
+            {"buffer": 0, "byteOffset": keys + 8, "byteLength": 24},
+        ]
+        data["accessors"] += [
+            {
+                "bufferView": 4,
+                "componentType": 5126,
+                "count": 2,
+                "type": "SCALAR",
+                "min": [0],
+                "max": [1],
+            },
+            {"bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3"},
+        ]
+        data["animations"] = [
+            {
+                "name": slide,
+                "channels": [
+                    {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                ],
+                "samplers": [{"input": 3, "output": 4}],
+            }
+        ]
     raw = json.dumps(data).encode()
     raw += b" " * (-len(raw) % 4)
     binary += b"\0" * (-len(binary) % 4)

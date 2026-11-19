@@ -116,6 +116,7 @@ class InspectionTests(unittest.TestCase):
         report = {
             "status": "ok",
             "godot_version": {"major": 4, "minor": 5, "string": "4.5.stable"},
+            "units": "metres",
             "bounds_semantics": "imported rest pose",
             "totals": {
                 "nodes": 3,

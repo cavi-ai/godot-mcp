@@ -44,6 +44,7 @@ def validate_report(report):
     totals, truncated = report.get("totals"), report.get("truncated")
     if (
         not isinstance(report.get("godot_version"), dict)
+        or report.get("units") != "metres"
         or report.get("bounds_semantics") != "imported rest pose"
         or not isinstance(totals, dict)
         or set(totals) != {*LIMITS, "unsupported_primitives"}

@@ -50,13 +50,13 @@ func visit(node: Node, parent_path: String, parent_world: Transform3D) -> void:
         for index in mesh.get_surface_count():
             totals.surfaces += 1
             var primitive = mesh.surface_get_primitive_type(index)
-            var arrays = mesh.surface_get_arrays(index)
-            var vertices = arrays[Mesh.ARRAY_VERTEX].size() if arrays[Mesh.ARRAY_VERTEX] != null else 0
-            var indices = arrays[Mesh.ARRAY_INDEX].size() if arrays[Mesh.ARRAY_INDEX] != null else 0
+            var format = mesh.surface_get_format(index)
+            var vertices = mesh.surface_get_array_len(index)
+            var indices = mesh.surface_get_array_index_len(index) if format & Mesh.ARRAY_FORMAT_INDEX else 0
             if primitive != Mesh.PRIMITIVE_TRIANGLES:
                 totals.unsupported_primitives += 1
             if surfaces.size() < MAX_SURFACES:
-                surfaces.append({"node": path, "surface": index, "primitive": primitive, "vertices": vertices, "triangles": int((indices if indices > 0 else vertices) / 3) if primitive == Mesh.PRIMITIVE_TRIANGLES else null, "uv0": arrays[Mesh.ARRAY_TEX_UV] != null and arrays[Mesh.ARRAY_TEX_UV].size() > 0, "uv1": arrays[Mesh.ARRAY_TEX_UV2] != null and arrays[Mesh.ARRAY_TEX_UV2].size() > 0, "material": material_info(node.get_active_material(index))})
+                surfaces.append({"node": path, "surface": index, "primitive": primitive, "vertices": vertices, "triangles": int((indices if indices > 0 else vertices) / 3) if primitive == Mesh.PRIMITIVE_TRIANGLES else null, "uv0": format & Mesh.ARRAY_FORMAT_TEX_UV != 0, "uv1": format & Mesh.ARRAY_FORMAT_TEX_UV2 != 0, "material": material_info(node.get_active_material(index))})
     if node is Skeleton3D:
         for index in node.get_bone_count():
             totals.bones += 1
@@ -85,13 +85,13 @@ func _initialize() -> void:
         quit(1)
         return
     visit(scene, "", Transform3D.IDENTITY)
-    var report = {"status": "ok", "godot_version": Engine.get_version_info(), "bounds_semantics": "imported rest pose", "totals": totals, "truncated": {"nodes": totals.nodes > nodes.size(), "surfaces": totals.surfaces > surfaces.size(), "bones": totals.bones > bones.size(), "clips": totals.clips > clips.size()}, "nodes": nodes, "surfaces": surfaces, "bones": bones, "clips": clips}
+    var report = {"status": "ok", "godot_version": Engine.get_version_info(), "units": "metres", "bounds_semantics": "imported rest pose", "totals": totals, "truncated": {"nodes": totals.nodes > nodes.size(), "surfaces": totals.surfaces > surfaces.size(), "bones": totals.bones > bones.size(), "clips": totals.clips > clips.size()}, "nodes": nodes, "surfaces": surfaces, "bones": bones, "clips": clips}
     var file = FileAccess.open("res://report.json", FileAccess.WRITE)
     if file == null:
         push_error("Could not write inspection report")
         quit(1)
         return
-    file.store_string(JSON.stringify(report))
+    file.store_string(JSON.stringify(report, "", true, true))
     file.close()
     scene.free()
     quit(0)

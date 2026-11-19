@@ -231,8 +231,8 @@ def textured_cubes(count=1, slide=None, size=1.0):
     )
 
 
-def skinned_cube(lift):
-    """A 1 m cube skinned to one bone; the one-second clip "Lift" raises the bone by ``lift``."""
+def skinned_cube(lift, duration=1.0):
+    """A 1 m cube skinned to one bone; the clip "Lift" raises the bone by ``lift``."""
     corners = [(x, y, z) for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)]
     quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4)]
     quads.append((1, 5, 7, 3))
@@ -242,7 +242,7 @@ def skinned_cube(lift):
         bytes(32),
         struct.pack("<32f", *[1, 0, 0, 0] * 8),
         struct.pack("<16f", 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
-        struct.pack("<2f", 0, 1),
+        struct.pack("<2f", 0, duration),
         struct.pack("<6f", 0, 0, 0, 0, lift, 0),
     ]
     views = []
@@ -263,7 +263,7 @@ def skinned_cube(lift):
         for i, (component, count, kind) in enumerate(kinds)
     ]
     accessors[0] |= {"min": [-0.5] * 3, "max": [0.5] * 3}
-    accessors[5] |= {"min": [0], "max": [1]}
+    accessors[5] |= {"min": [0], "max": [duration]}
     binary = b"".join(parts)
     raw = json.dumps(
         {

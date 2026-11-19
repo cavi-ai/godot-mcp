@@ -42,7 +42,7 @@ To use other files, set `CAVI_GODOT_BIN`, `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROM
 - Inspect a self-contained GLB for scene nodes, mesh surfaces, materials, UV presence, skeletons and clips.
 - Sample an animation's node and skeleton transforms at selected times.
 - Prepare and capture a static view, including texture-free and vertex-colored drafts before cleanup, or capture one selected pose from an animated GLB. Open the capture for visual review.
-- Serve the exported review bundle locally to orbit and zoom; press R to reset the camera. A white bar marks one metre. Pose reviews open paused at the requested time. Play or pause the selected clip, scrub the timeline, or select Reset pose.
+- Serve the exported review bundle locally to orbit and zoom; press R to reset the camera. A white bar on the asset's bottom front edge is the largest power of ten that fits it, such as 1 cm or 1 m, and the label names its length. Pose reviews open paused at the requested time. Play or pause the selected clip, scrub the timeline, or select Reset pose.
 
 <details>
 <summary>Operations, limits and recovery</summary>

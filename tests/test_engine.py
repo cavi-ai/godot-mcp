@@ -1,13 +1,19 @@
-"""Inspection and motion run in the installed Godot; CI requires one."""
+"""Inspection, motion and the review scene run in the installed Godot; CI requires one."""
 
+import json
+import math
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from test_support import textured_cubes
 
-from godot_mcp import config, inspection, motion
+from godot_mcp import config, inspection, motion, review
+
+READY = "godot-review-ready "
 
 
 @unittest.skipUnless(
@@ -72,6 +78,50 @@ class EngineTests(unittest.TestCase):
         output = self.root / "motion"
         self.assertTrue((output / "receipt.json").is_file())
         self.assertFalse((output / ".motion.pending").exists())
+
+    def review_scene(self, source, view):
+        """The metadata the review scene reports when run headless on ``source``."""
+        project = self.root / "review"
+        project.mkdir()
+        runtime = Path(review.__file__).parent / "runtime"
+        for name in ("project.godot", "main.tscn"):
+            shutil.copyfile(runtime / name, project / name)
+        (project / "subject.glb").write_bytes(source)
+        template = (runtime / "main.gd").read_text()
+        (project / "main.gd").write_text(
+            review.render_script(template, {"view": view}, fallback=False)
+        )
+        godot = str(config.tools((config.GODOT,))[config.GODOT])
+        base = [godot, "--headless", "--path", str(project)]
+        subprocess.run(
+            [*base, "--editor", "--import"],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        run = subprocess.run(
+            [*base, "--quit-after", "30"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        lines = [line for line in run.stdout.splitlines() if line.startswith(READY)]
+        self.assertEqual(len(lines), 1, run.stdout + run.stderr)
+        return json.loads(lines[0].removeprefix(READY))
+
+    def test_review_camera_fits_a_small_prop_at_three_quarter(self):
+        scene = self.review_scene(textured_cubes(size=0.02), "three-quarter")
+        radius = math.hypot(*scene["bounds_size"]) / 2
+        frame = scene["camera_frame"]
+        self.assertAlmostEqual(
+            math.degrees(math.asin(radius / frame["distance"])), 22.5, places=3
+        )
+        offset = [p - c for p, c in zip(scene["camera_position"], frame["center"])]
+        self.assertAlmostEqual(math.atan2(offset[0], offset[2]), math.pi / 4, places=5)
+        near, far = scene["camera_clip"]
+        self.assertLess(near, frame["distance"] - radius)
+        self.assertGreater(far, frame["distance"] + radius)
 
 
 if __name__ == "__main__":

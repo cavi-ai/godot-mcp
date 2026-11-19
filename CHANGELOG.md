@@ -13,6 +13,8 @@
 - Godot, Chromium, Node.js and the Web template are found where they are installed; `CAVI_GODOT_BIN`, `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_BIN` and `CAVI_NODE_BIN` override them.
 - The inspection receipt records `report_sha256` instead of the report, as the motion receipt does; inspection and motion refuse a run whose copied GLB or script changed.
 - A capture's `request.json` records `camera_frame_evidence` for static views.
+- The review camera distance fits the asset's bounding sphere to the field of view, with no minimum size, and the clip planes follow it; the three-quarter view is at 45°.
+- Captured scene metadata records `camera_position` and `camera_clip`; the review scene prints its metadata when run outside a browser.
 
 ### Fixed
 

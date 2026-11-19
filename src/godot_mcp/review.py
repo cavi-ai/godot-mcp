@@ -916,6 +916,17 @@ def capture(root, directory):
 validate_pose_scene = validate_scene
 
 
+def render_script(template, receipt, fallback):
+    """main.gd with the review's view and selection written in."""
+    return (
+        template.replace("VIEW_NAME", json.dumps(receipt["view"]))
+        .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
+        .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
+        .replace("GEOMETRY_PREVIEW_ENABLED", "true" if fallback else "false")
+        .replace("ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false")
+    )
+
+
 def capture_locked(root, directory):
     receipt = inspect(root, directory, include_status=False)
     dest = inside(root, directory)
@@ -953,21 +964,7 @@ def capture_locked(root, directory):
             != inputs["provider"]["runtime"]["main.gd"]
         ):
             raise ValueError("Copied runtime changed")
-        expected_script = (
-            template.decode()
-            .replace(
-                "VIEW_YAW",
-                {"front": "0.0", "three-quarter": "0.65", "side": "1.5708"}[
-                    receipt["view"]
-                ],
-            )
-            .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
-            .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
-            .replace("GEOMETRY_PREVIEW_ENABLED", "true" if fallback else "false")
-            .replace(
-                "ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false"
-            )
-        )
+        expected_script = render_script(template.decode(), receipt, fallback)
         (project / "main.gd").write_text(expected_script)
         if "pose" in receipt:
             atomic_json(project / "pose.json", receipt["pose"])

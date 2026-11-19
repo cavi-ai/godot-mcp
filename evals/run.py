@@ -59,7 +59,7 @@ async def exercise(env):
             if not a or (
                 a.read_only_hint,
                 a.destructive_hint,
-                a.idempotent_hint,
+                bool(a.idempotent_hint),
                 a.open_world_hint,
             ) != (readonly, False, readonly, False):
                 raise ValueError("Incorrect tool annotations: " + tool.name)

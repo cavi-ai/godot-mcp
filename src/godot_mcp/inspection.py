@@ -162,10 +162,8 @@ def validate_report(report):
 
 
 def inspect_asset(root, source, directory):
-    src = review.inside(root, source)
-    dest = review.inside(root, directory)
-    if not src.is_file() or src.suffix.lower() != ".glb":
-        raise ValueError("Source must be a GLB file")
+    src = review.source_glb(root, source)
+    dest = review.new_output(root, directory)
     validate_glb(src)
     engine = config.tools((config.GODOT,))[config.GODOT]
     runtime = Path(__file__).parent / "runtime" / "inspect.gd"
@@ -174,7 +172,7 @@ def inspect_asset(root, source, directory):
         "engine_sha256": review.digest(engine),
         "provider": review.provider_identity(),
     }
-    dest.mkdir(parents=False, exist_ok=False)
+    dest.mkdir()
     pending = dest / ".inspection.pending"
     project = None
     try:

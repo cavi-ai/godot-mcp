@@ -11,7 +11,7 @@ import tempfile
 from datetime import UTC
 from pathlib import Path
 
-from cavi_mcp_core import files, journal, owned_exec, processes
+from cavi_mcp_core import files, journal, owned_exec, processes, workspace
 from cavi_mcp_core.contracts import OperationUnknown
 
 from . import config
@@ -59,11 +59,24 @@ def digest(path, limit=None):
     return result.hexdigest()
 
 
-def inside(root, relative):
-    rel = Path(relative)
-    if rel.is_absolute() or not rel.parts or ".." in rel.parts:
+def relative_path(value):
+    path = Path(value)
+    if path.is_absolute() or not path.parts or ".." in path.parts:
         raise ValueError("Path must be relative to the workspace")
-    return files.inside(root, rel)
+    return value
+
+
+def inside(root, value):
+    return files.inside(root, relative_path(value))
+
+
+def source_glb(root, source):
+    return workspace.input_file(root, relative_path(source), {".glb"})
+
+
+def new_output(root, directory):
+    """A new output directory inside the workspace, validated but not yet created."""
+    return workspace.output_path(root, relative_path(directory))
 
 
 def read_glb(path, *, static_review=True):
@@ -325,9 +338,7 @@ def prepare(
         raise ValueError("Multiple views are only supported for static reviews")
     if view not in ("front", "three-quarter", "side"):
         raise ValueError("Unsupported view")
-    src, dest = inside(root, source), inside(root, directory)
-    if not src.is_file() or src.suffix.lower() != ".glb":
-        raise ValueError("Source must be a GLB file")
+    src, dest = source_glb(root, source), new_output(root, directory)
     if pose is not None:
         from .pose import Pose
 
@@ -338,7 +349,7 @@ def prepare(
     if pose is not None:
         select_clip(document, pose["animation"], pose["time_seconds"])
     source_sha256 = digest(src, LIMIT)
-    dest.mkdir(parents=False, exist_ok=False)
+    dest.mkdir()
     receipt = {
         "version": 1,
         "kind": "godot-asset-review",

@@ -155,12 +155,23 @@ void fragment() {
  env.environment.ambient_light_color = Color.WHITE
  env.environment.ambient_light_energy = 0.45
  add_child(env)
- var ruler = MeshInstance3D.new()
+ # The bar is the largest power of ten that fits along the bottom front edge of the bounds.
+ var axis = Vector3.AXIS_X if bounds.size.x >= bounds.size.z else Vector3.AXIS_Z
+ if bounds.size[axis] == 0.0:
+  axis = Vector3.AXIS_Y
+ var bar_length = pow(10.0, floor(log(bounds.size[axis]) / log(10.0) + 1e-9))
+ var bar_start = Vector3(bounds.position.x, bounds.position.y, bounds.end.z)
+ if axis == Vector3.AXIS_Z:
+  bar_start = Vector3(bounds.end.x, bounds.position.y, bounds.position.z)
+ var bar_end = bar_start
+ bar_end[axis] += bar_length
  var bar = BoxMesh.new()
- bar.size = Vector3(1, 0.025, 0.025)
+ bar.size = Vector3.ONE * bar_length * 0.025
+ bar.size[axis] = bar_length
+ var ruler = MeshInstance3D.new()
  ruler.mesh = bar
  add_child(ruler)
- ruler.position = Vector3(bounds.position.x + 0.5, bounds.position.y, bounds.end.z + 0.08)
+ ruler.position = (bar_start + bar_end) / 2
  var surfaces = 0
  var textures = 0
  var materials = []
@@ -185,8 +196,9 @@ void fragment() {
   metadata["geometry_preview_surfaces"] = geometry_preview_surfaces
  metadata["camera_position"] = vector(camera.global_position)
  metadata["camera_clip"] = [camera.near, camera.far]
+ metadata["scale_bar"] = {"length": bar_length, "start": vector(bar_start), "end": vector(bar_end)}
  var label = Label.new()
- label.text = "Drag to orbit · Scroll to zoom · R to reset | white bar = 1 m"
+ label.text = "Drag to orbit · Scroll to zoom · R to reset | white bar = " + length_text(bar_length)
  var hud = CanvasLayer.new()
  add_child(hud)
  hud.add_child(label)
@@ -210,6 +222,15 @@ func fit_distance(radius: float) -> float:
  var half_vertical = deg_to_rad(FOV) / 2
  var half_horizontal = atan(tan(half_vertical) * size.x / size.y)
  return radius / sin(min(half_vertical, half_horizontal))
+
+func length_text(length: float) -> String:
+ if length >= 1.0:
+  return "%d m" % roundi(length)
+ if length >= 0.01:
+  return "%d cm" % roundi(length * 100)
+ if length >= 0.001:
+  return "%d mm" % roundi(length * 1000)
+ return "%s m" % length
 
 func select_capture_view(args: Array):
  if args.size() != 1 or not args[0] is String or not VIEW_YAW.has(args[0]):

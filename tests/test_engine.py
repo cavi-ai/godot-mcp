@@ -123,6 +123,18 @@ class EngineTests(unittest.TestCase):
         self.assertLess(near, frame["distance"] - radius)
         self.assertGreater(far, frame["distance"] + radius)
 
+    def test_review_scale_bar_is_a_power_of_ten_inside_the_bounds(self):
+        scene = self.review_scene(textured_cubes(size=0.02), "front")
+        bar = scene["scale_bar"]
+        self.assertAlmostEqual(bar["length"], 0.01, places=6)
+        self.assertAlmostEqual(math.dist(bar["start"], bar["end"]), 0.01, places=6)
+        low = scene["bounds_origin"]
+        high = [o + s for o, s in zip(low, scene["bounds_size"])]
+        for point in (bar["start"], bar["end"]):
+            for value, lower, upper in zip(point, low, high):
+                self.assertLessEqual(lower - 1e-6, value)
+                self.assertLessEqual(value, upper + 1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

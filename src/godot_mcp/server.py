@@ -2,13 +2,12 @@
 
 import os
 from functools import partial
-from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import anyio
+from cavi_mcp_core import workspace as core_workspace
 from cavi_mcp_core.contracts import failure
-from cavi_mcp_core.server import READ_ONLY, Server
-from mcp.types import ToolAnnotations
+from cavi_mcp_core.server import READ_ONLY, WRITES, Server
 from pydantic import Field, StrictBool
 
 from . import config, inspection, motion, review
@@ -24,16 +23,10 @@ class GodotServer(Server):
 
 
 mcp = GodotServer("godot-asset-review", package="cavi-godot-mcp")
-WRITES = ToolAnnotations(
-    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
-)
 
 
 def workspace():
-    value = os.environ.get("CAVI_GAME_ART_WORKSPACE")
-    if not value:
-        raise ValueError("CAVI_GAME_ART_WORKSPACE is required")
-    return Path(value).resolve(strict=True)
+    return core_workspace.existing_root("CAVI_GAME_ART_WORKSPACE")
 
 
 async def call(function, *args):

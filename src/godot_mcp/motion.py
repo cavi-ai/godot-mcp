@@ -148,10 +148,8 @@ def inspect_motion(root, source, directory, player, animation, normalized_times)
         or not animation
     ):
         raise ValueError("Choose an explicit player and animation")
-    src = review.inside(root, source)
-    dest = review.inside(root, directory)
-    if not src.is_file() or src.suffix.lower() != ".glb":
-        raise ValueError("Source must be a GLB file")
+    src = review.source_glb(root, source)
+    dest = review.new_output(root, directory)
     review.select_clip(inspection.validate_glb(src), animation)
     engine = tools((GODOT,))[GODOT]
     runtime = Path(__file__).parent / "runtime" / "motion.gd"
@@ -165,7 +163,7 @@ def inspect_motion(root, source, directory, player, animation, normalized_times)
         "engine_sha256": review.digest(engine),
         "provider": review.provider_identity(),
     }
-    dest.mkdir(parents=False, exist_ok=False)
+    dest.mkdir()
     pending = dest / ".motion.pending"
     project = None
     try:

@@ -29,6 +29,45 @@ class UnknownOutcomeTests(unittest.TestCase):
 
 
 class McpContractTests(unittest.IsolatedAsyncioTestCase):
+    async def call(self, workspace, cwd, name, args):
+        env = dict(os.environ, CAVI_GAME_ART_WORKSPACE=workspace)
+        command = owned_exec.command(
+            [sys.executable, "-m", "godot_mcp.server"], env=env
+        )
+        params = StdioServerParameters(
+            command=command[0], args=command[1:], env=env, cwd=cwd
+        )
+        async with (
+            stdio_client(params) as (reader, writer),
+            ClientSession(reader, writer) as session,
+        ):
+            await session.initialize()
+            return await session.call_tool(name, args)
+
+    async def test_workspace_root_and_output_parent_are_refused_plainly(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "workspace"
+            root.mkdir()
+            (root / "asset.glb").write_bytes(textured_cubes())
+            relative = await self.call(
+                "workspace",
+                d,
+                "godot_review_prepare",
+                {"source": "asset.glb", "directory": "review"},
+            )
+            self.assertTrue(relative.is_error)
+            self.assertIn("absolute", relative.content[0].text)
+            self.assertFalse((root / "review").exists())
+            orphan = await self.call(
+                str(root),
+                d,
+                "godot_review_prepare",
+                {"source": "asset.glb", "directory": "missing/review"},
+            )
+            self.assertTrue(orphan.is_error)
+            self.assertEqual(orphan.structured_content["error"]["outcome"], "rejected")
+            self.assertNotIn(d, orphan.content[0].text)
+
     async def test_catalog_validation_and_recovery(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -77,7 +116,7 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(a.destructive_hint)
                     self.assertFalse(a.open_world_hint)
                     self.assertEqual(
-                        a.idempotent_hint,
+                        bool(a.idempotent_hint),
                         name in ("godot_status", "godot_review_inspect"),
                     )
                 status = await session.call_tool("godot_status", {})

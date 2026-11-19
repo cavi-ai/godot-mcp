@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Requires `cavi-mcp-core>=0.1.4`.
+- Source and output paths follow MCP Core's workspace rules.
+
+### Fixed
+
+- Malformed GLB JSON (a non-object document, NaN or non-object entries) is refused before any output is written.
+- Pose and motion requests for a missing clip, a time past the clip end or a zero-length clip are refused before Godot runs.
+- The Godot inspection report's shape, counts, truncation flags and references are checked before a receipt is written.
+- Inspecting a captured review without tool configuration is refused instead of raising `KeyError`.
+
 ## 0.1.0 - 2026-11-16
 
 ### Added

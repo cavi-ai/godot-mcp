@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Every tool declares an output schema for its result.
+
 ### Changed
 
 - Requires `cavi-mcp-core>=0.1.4`.

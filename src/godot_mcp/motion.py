@@ -37,7 +37,7 @@ def validate_report(report, player, animation, times):
         or not isinstance(report.get("samples"), list)
         or len(report["samples"]) != len(times)
         or not isinstance(report.get("godot_version"), dict)
-        or report.get("units") != "Godot scene units"
+        or report.get("units") != "metres"
         or report.get("bone_space") != "skeleton relative and Godot world"
         or type(report.get("loop_mode")) is not int
     ):

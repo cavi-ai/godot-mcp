@@ -93,7 +93,7 @@ func run() -> void:
             var pose = item.node.get_bone_global_pose(item.index)
             bone_values.append({"skeleton_transform": matrix(pose), "world_transform": matrix(item.node.global_transform * pose)})
         samples.append({"normalized_time": time, "seconds": seconds, "nodes": node_values, "bones": bone_values})
-    var report = {"status": "ok", "godot_version": Engine.get_version_info(), "player": chosen_player, "animation": config.animation, "duration": animation.length, "loop_mode": animation.loop_mode, "units": "Godot scene units", "bone_space": "skeleton relative and Godot world", "nodes": node_inventory, "bones": bone_inventory, "samples": samples}
+    var report = {"status": "ok", "godot_version": Engine.get_version_info(), "player": chosen_player, "animation": config.animation, "duration": animation.length, "loop_mode": animation.loop_mode, "units": "metres", "bone_space": "skeleton relative and Godot world", "nodes": node_inventory, "bones": bone_inventory, "samples": samples}
     var file = FileAccess.open("res://report.json", FileAccess.WRITE)
     if file == null:
         fail("Could not write motion report")

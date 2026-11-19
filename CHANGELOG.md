@@ -17,9 +17,12 @@
 - Captured scene metadata records `camera_position` and `camera_clip`; the review scene prints its metadata when run outside a browser.
 - The scale bar is the largest power of ten that fits the asset's bottom front edge instead of a fixed 1 m bar in front of it; `scale_bar` records its length and ends.
 - Pose reviews frame skinned meshes by their vertices at the selected time instead of bone origins with padding.
+- Inspection and motion reports give `units` as `metres`; motion reports replace `Godot scene units`.
+- Inspection counts surface vertices, indices and UV sets without copying mesh arrays.
 
 ### Fixed
 
+- Inspection reports full-precision numbers; clip durations were rounded to 15 digits and could exceed the clip's length.
 - Malformed GLB JSON (a non-object document, NaN or non-object entries) is refused before any output is written.
 - Pose and motion requests for a missing clip, a time past the clip end or a zero-length clip are refused before Godot runs.
 - The Godot inspection report's shape, counts, truncation flags and references are checked before a receipt is written.

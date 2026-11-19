@@ -4,6 +4,7 @@ import json
 import math
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -56,6 +57,13 @@ class EngineTests(unittest.TestCase):
         self.assertTrue((output / "receipt.json").is_file())
         self.assertFalse((output / ".inspection.pending").exists())
 
+    def test_inspection_reports_the_exact_clip_length_in_metres(self):
+        (self.root / "rig.glb").write_bytes(skinned_cube(lift=1.0, duration=11 / 24))
+        report = inspection.inspect_asset(self.root, "rig.glb", "rig")["report"]
+        length = struct.unpack("<f", struct.pack("<f", 11 / 24))[0]
+        self.assertEqual([clip["duration"] for clip in report["clips"]], [length])
+        self.assertEqual(report["units"], "metres")
+
     def test_motion_samples_the_clip(self):
         result = motion.inspect_motion(
             self.root,
@@ -67,6 +75,7 @@ class EngineTests(unittest.TestCase):
         )
         report = result["report"]
         self.assertEqual(report["duration"], 1.0)
+        self.assertEqual(report["units"], "metres")
         index = [n["path"] for n in report["nodes"]].index("/subject/Cube0")
         self.assertEqual(
             [

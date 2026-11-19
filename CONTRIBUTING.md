@@ -10,7 +10,7 @@ uv run --locked ruff format --check .
 uv build
 ```
 
-The unit suite and protocol evaluator do not launch Godot or Chromium. Build and run the evaluator with:
+The unit suite runs inspection and motion in the installed Godot and skips them when none is found; CI installs the newest stable Godot and requires them. The protocol evaluator does not launch Godot or Chromium. Build and run the evaluator with:
 
 ```sh
 uv run --locked python evals/evaluator.py build --root .tmp/mcp-eval --branch main

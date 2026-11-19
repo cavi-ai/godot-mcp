@@ -95,10 +95,11 @@ def raw_glb(document):
     )
 
 
-def textured_cubes(count=1, slide=None):
+def textured_cubes(count=1, slide=None, size=1.0):
     """A small embedded-texture fixture; multiple nodes share one cube mesh.
 
     ``slide`` names a one-second clip moving the first cube from x = 0 to x = 1.
+    ``size`` is the cube edge length in metres.
     """
 
     def chunk(kind, payload):
@@ -124,7 +125,7 @@ def textured_cubes(count=1, slide=None):
         ((-1, 1, 1), (1, 1, 1), (1, 1, -1), (-1, 1, -1)),
         ((-1, -1, -1), (1, -1, -1), (1, -1, 1), (-1, -1, 1)),
     ]
-    positions = [c / 2 for face in faces for point in face for c in point]
+    positions = [c * size / 2 for face in faces for point in face for c in point]
     uvs = [v for _ in faces for v in (0, 1, 1, 1, 1, 0, 0, 0)]
     indices = [
         index
@@ -145,7 +146,7 @@ def textured_cubes(count=1, slide=None):
         "scene": 0,
         "scenes": [{"nodes": list(range(count))}],
         "nodes": [
-            {"name": f"Cube{i}", "mesh": 0, "translation": [i * 1.4, 0, 0]}
+            {"name": f"Cube{i}", "mesh": 0, "translation": [i * 1.4 * size, 0, 0]}
             for i in range(count)
         ],
         "meshes": [
@@ -186,8 +187,8 @@ def textured_cubes(count=1, slide=None):
                 "componentType": 5126,
                 "count": 24,
                 "type": "VEC3",
-                "min": [-0.5, -0.5, -0.5],
-                "max": [0.5, 0.5, 0.5],
+                "min": [-size / 2] * 3,
+                "max": [size / 2] * 3,
             },
             {"bufferView": 1, "componentType": 5126, "count": 24, "type": "VEC2"},
             {"bufferView": 2, "componentType": 5123, "count": 36, "type": "SCALAR"},

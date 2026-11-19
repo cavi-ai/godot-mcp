@@ -3,12 +3,16 @@ const REQUIRE_POSE = POSE_ENABLED
 const ALL_VIEWS = ALL_VIEWS_ENABLED
 const REQUIRE_FRAMING = FRAMING_ENABLED
 const GEOMETRY_PREVIEW = GEOMETRY_PREVIEW_ENABLED
+const VIEW = VIEW_NAME
+const VIEW_YAW = {"front": 0.0, "three-quarter": PI / 4, "side": PI / 2}
+const PITCH = 0.3
+const FOV = 45.0
 var camera: Camera3D
 var center: Vector3
-var radius := 2.0
-var yaw := VIEW_YAW
-var pitch := 0.3
-var initial_radius: float
+var distance := 1.0
+var yaw: float = VIEW_YAW[VIEW]
+var pitch := PITCH
+var initial_distance: float
 var dragging := false
 var pose_player: AnimationPlayer
 var pose_player_path := ""
@@ -122,18 +126,21 @@ void fragment() {
     padding = max(padding, mesh_bounds.size.length() * 0.2)
   bounds = pose_bounds.grow(padding)
  center = bounds.get_center()
- radius = max(bounds.size.length() * 0.8, 0.1)
+ if bounds.size.length() == 0.0:
+  push_error("Subject has no extent")
+  return
+ distance = fit_distance(bounds.size.length() / 2)
  if REQUIRE_FRAMING:
   var frame = JSON.parse_string(FileAccess.get_file_as_string("res://framing.json"))
   if not frame is Dictionary or not frame.has("center") or not frame.has("distance"):
    push_error("Invalid camera framing")
    return
   center = Vector3(frame.center[0], frame.center[1], frame.center[2])
-  radius = float(frame.distance) / 1.75
- initial_radius = radius
+  distance = float(frame.distance)
+ initial_distance = distance
  camera = Camera3D.new()
  add_child(camera)
- camera.fov = 45
+ camera.fov = FOV
  camera.current = true
  update_camera()
  var key = DirectionalLight3D.new()
@@ -176,6 +183,8 @@ void fragment() {
  else:
   metadata["camera_frame"] = {"center": vector(center), "distance": camera.global_position.distance_to(center)}
   metadata["geometry_preview_surfaces"] = geometry_preview_surfaces
+ metadata["camera_position"] = vector(camera.global_position)
+ metadata["camera_clip"] = [camera.near, camera.far]
  var label = Label.new()
  label.text = "Drag to orbit · Scroll to zoom · R to reset | white bar = 1 m"
  var hud = CanvasLayer.new()
@@ -192,16 +201,22 @@ void fragment() {
    view_callback = JavaScriptBridge.create_callback(select_capture_view)
    JavaScriptBridge.get_interface("window").godotReviewSetView = view_callback
   JavaScriptBridge.eval("window.godotReviewReady = " + JSON.stringify(metadata, "", true, true))
+ else:
+  print("godot-review-ready ", JSON.stringify(metadata, "", true, true))
+
+func fit_distance(radius: float) -> float:
+ # The bounding sphere touches the narrower of the vertical and horizontal fields of view.
+ var size = get_viewport().get_visible_rect().size
+ var half_vertical = deg_to_rad(FOV) / 2
+ var half_horizontal = atan(tan(half_vertical) * size.x / size.y)
+ return radius / sin(min(half_vertical, half_horizontal))
 
 func select_capture_view(args: Array):
- if args.size() != 1 or not args[0] is String:
+ if args.size() != 1 or not args[0] is String or not VIEW_YAW.has(args[0]):
   return
- var views = {"front": 0.0, "three-quarter": 0.65, "side": 1.5708}
- if not views.has(args[0]):
-  return
- yaw = views[args[0]]
- pitch = 0.3
- radius = initial_radius
+ yaw = VIEW_YAW[args[0]]
+ pitch = PITCH
+ distance = initial_distance
  update_camera()
  await RenderingServer.frame_post_draw
  var state = {"view": args[0], "camera_position": vector(camera.global_position)}
@@ -307,18 +322,20 @@ func collect_meshes(node: Node, meshes: Array[MeshInstance3D]):
   collect_meshes(child, meshes)
 
 func update_camera():
- camera.position = center + Vector3(sin(yaw)*cos(pitch), sin(pitch), cos(yaw)*cos(pitch)) * radius * 1.75
+ camera.position = center + Vector3(sin(yaw)*cos(pitch), sin(pitch), cos(yaw)*cos(pitch)) * distance
  camera.look_at(center)
+ camera.near = distance / 100.0
+ camera.far = distance * 100.0
 
 func _unhandled_input(event):
  if event is InputEventMouseButton:
   if event.button_index == MOUSE_BUTTON_LEFT:
    dragging = event.pressed
   if event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP:
-   radius = max(radius * 0.9, 0.05)
+   distance = max(distance * 0.9, initial_distance * 0.05)
    update_camera()
   if event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-   radius *= 1.1
+   distance *= 1.1
    update_camera()
  if event is InputEventMouseMotion and dragging and event.button_mask & MOUSE_BUTTON_MASK_LEFT:
   yaw -= event.relative.x * 0.01
@@ -326,7 +343,7 @@ func _unhandled_input(event):
   update_camera()
 
  if event is InputEventKey and event.pressed and event.keycode == KEY_R:
-  yaw = VIEW_YAW
-  pitch = 0.3
-  radius = initial_radius
+  yaw = VIEW_YAW[VIEW]
+  pitch = PITCH
+  distance = initial_distance
   update_camera()

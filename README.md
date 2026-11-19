@@ -1,8 +1,8 @@
 # Cavi Godot MCP
 
-![A frog king on a turntable, inspected by an otter curator](assets/godot-mcp-hero.png)
-
 ## Take it for a spin.
+
+![A frog king on a turntable, inspected by an otter curator](assets/godot-mcp-hero.png)
 
 See your GLB as Godot imports it. Cavi Godot MCP helps your assistant inspect meshes, materials, skeletons and animation clips, then prepare a rendered view you can review together. Orbit a static asset or capture a selected animation pose without building a review scene by hand.
 

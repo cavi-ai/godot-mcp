@@ -4,6 +4,7 @@ import itertools
 import math
 
 from . import engine, inspection, review
+from .shapes import number, transform
 
 REPORT_LIMIT = 4 * 1024 * 1024
 
@@ -12,10 +13,7 @@ def validate_times(times):
     if (
         not isinstance(times, list)
         or not 2 <= len(times) <= 9
-        or any(
-            type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1
-            for v in times
-        )
+        or any(not number(v) or not 0 <= v <= 1 for v in times)
         or any(a >= b for a, b in itertools.pairwise(times))
     ):
         raise ValueError(
@@ -30,8 +28,7 @@ def validate_report(report, player, animation, times):
     if (
         report.get("player") != player
         or report.get("animation") != animation
-        or type(duration) not in (int, float)
-        or not math.isfinite(duration)
+        or not number(duration)
         or duration <= 0
         or not isinstance(report.get("nodes"), list)
         or not 1 <= len(report["nodes"]) <= 256
@@ -45,26 +42,6 @@ def validate_report(report, player, animation, times):
         or type(report.get("loop_mode")) is not int
     ):
         raise ValueError("Motion report identity or limits differ")
-
-    def transform(value):
-        if not isinstance(value, dict) or set(value) != {"origin", "basis"}:
-            return False
-        origin, basis = value["origin"], value["basis"]
-
-        def vector(v):
-            return (
-                isinstance(v, list)
-                and len(v) == 3
-                and all(type(n) in (int, float) and math.isfinite(n) for n in v)
-            )
-
-        return (
-            vector(origin)
-            and isinstance(basis, list)
-            and len(basis) == 3
-            and all(vector(v) for v in basis)
-        )
-
     nodes, bones = report["nodes"], report["bones"]
     if (
         any(
@@ -102,11 +79,9 @@ def validate_report(report, player, animation, times):
     for sample, t in zip(report["samples"], times, strict=True):
         if (
             not isinstance(sample, dict)
-            or type(sample.get("normalized_time")) not in (int, float)
-            or not math.isfinite(sample["normalized_time"])
+            or not number(sample.get("normalized_time"))
             or sample["normalized_time"] != t
-            or type(sample.get("seconds")) not in (int, float)
-            or not math.isfinite(sample["seconds"])
+            or not number(sample.get("seconds"))
             or not math.isclose(
                 sample["seconds"], t * duration, rel_tol=1e-6, abs_tol=1e-6
             )

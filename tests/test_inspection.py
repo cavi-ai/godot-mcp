@@ -1,3 +1,4 @@
+import hashlib
 import os
 import tempfile
 import unittest
@@ -169,11 +170,13 @@ class InspectionTests(unittest.TestCase):
             engine = root / "engine"
             engine.write_bytes(b"engine")
 
-            def inspect(value, directory):
+            def inspect(value, directory, change=None):
                 def run(command, timeout, dest, label):
                     (dest / "godot.stdout").write_bytes(b"")
                     (dest / "godot.stderr").write_bytes(b"")
                     (Path(command[3]) / "report.json").write_text(json.dumps(value))
+                    if change:
+                        (Path(command[3]) / change).write_bytes(b"changed")
 
                 with (
                     patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
@@ -182,7 +185,20 @@ class InspectionTests(unittest.TestCase):
                     return inspection.inspect_asset(root, "asset.glb", directory)
 
             self.assertEqual(inspect(report, "good")["report"], report)
-            self.assertTrue((root / "good" / "receipt.json").is_file())
+            receipt = json.loads((root / "good" / "receipt.json").read_text())
+            self.assertNotIn("report", receipt)
+            self.assertEqual(
+                receipt["report_sha256"],
+                hashlib.sha256(
+                    (root / "good" / "report.json").read_bytes()
+                ).hexdigest(),
+            )
+            for change in ("subject.glb", "inspect.gd"):
+                with self.subTest(change=change), self.assertRaises(OperationUnknown):
+                    inspect(report, "changed-" + change, change)
+                self.assertFalse(
+                    (root / ("changed-" + change) / "receipt.json").exists()
+                )
             for index, bad in enumerate(
                 (
                     {**report, "nodes": {}},
@@ -209,6 +225,8 @@ class InspectionTests(unittest.TestCase):
                 self.assertFalse((root / directory / "receipt.json").exists())
 
     def test_unknown_cleanup_preserves_project_and_input_receipt(self):
+        import shutil
+
         from godot_mcp import review
 
         with tempfile.TemporaryDirectory() as d:
@@ -223,9 +241,7 @@ class InspectionTests(unittest.TestCase):
                     "run_owned",
                     side_effect=review.CleanupUnverified("uncertain"),
                 ),
-                patch.object(
-                    inspection.shutil, "rmtree", side_effect=OSError("cleanup failed")
-                ),
+                patch.object(shutil, "rmtree", side_effect=OSError("cleanup failed")),
             ):
                 with self.assertRaises(review.CleanupUnverified):
                     inspection.inspect_asset(root, "asset.glb", "result")

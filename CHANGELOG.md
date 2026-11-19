@@ -7,6 +7,7 @@
 - Requires `cavi-mcp-core>=0.1.4`.
 - Source and output paths follow MCP Core's workspace rules.
 - Godot, Chromium, Node.js and the Web template are found where they are installed; `CAVI_GODOT_BIN`, `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_BIN` and `CAVI_NODE_BIN` override them.
+- The inspection receipt records `report_sha256` instead of the report, as the motion receipt does; inspection and motion refuse a run whose copied GLB or script changed.
 
 ### Fixed
 

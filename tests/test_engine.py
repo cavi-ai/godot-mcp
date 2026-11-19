@@ -136,6 +136,11 @@ class EngineTests(unittest.TestCase):
         self.assertLess(near, frame["distance"] - radius)
         self.assertGreater(far, frame["distance"] + radius)
 
+    def test_review_scene_reports_its_renderer(self):
+        scene = self.review_scene(textured_cubes(), "front")
+        self.assertEqual(scene["renderer"]["method"], "gl_compatibility")
+        self.assertEqual(scene["renderer"]["driver"], "opengl3")
+
     def test_review_scale_bar_is_a_power_of_ten_inside_the_bounds(self):
         scene = self.review_scene(textured_cubes(size=0.02), "front")
         bar = scene["scale_bar"]

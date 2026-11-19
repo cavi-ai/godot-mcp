@@ -137,13 +137,23 @@ void fragment() {
  add_child(key)
  key.rotation_degrees = Vector3(-45, -35, 0)
  key.light_energy = 1.4
+ # A neutral grey sky lights the subject and gives metals something to reflect;
+ # the visible background stays a flat colour.
+ var sky_material = ProceduralSkyMaterial.new()
+ sky_material.sky_top_color = Color(0.62, 0.63, 0.65)
+ sky_material.sky_horizon_color = Color(0.78, 0.78, 0.78)
+ sky_material.ground_horizon_color = Color(0.45, 0.45, 0.45)
+ sky_material.ground_bottom_color = Color(0.18, 0.18, 0.18)
+ var sky = Sky.new()
+ sky.sky_material = sky_material
  var env = WorldEnvironment.new()
  env.environment = Environment.new()
+ env.environment.sky = sky
  env.environment.background_mode = Environment.BG_COLOR
  env.environment.background_color = Color(0.12, 0.13, 0.15)
- env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
- env.environment.ambient_light_color = Color.WHITE
- env.environment.ambient_light_energy = 0.45
+ env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+ env.environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+ env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
  add_child(env)
  # The bar is the largest power of ten that fits along the bottom front edge of the bounds.
  var axis = Vector3.AXIS_X if bounds.size.x >= bounds.size.z else Vector3.AXIS_Z
@@ -184,6 +194,8 @@ void fragment() {
  else:
   metadata["camera_frame"] = {"center": vector(center), "distance": camera.global_position.distance_to(center)}
   metadata["geometry_preview_surfaces"] = geometry_preview_surfaces
+ metadata["renderer"] = {"method": RenderingServer.get_current_rendering_method(),
+  "driver": RenderingServer.get_current_rendering_driver_name(), "adapter": RenderingServer.get_video_adapter_name()}
  metadata["camera_position"] = vector(camera.global_position)
  metadata["camera_clip"] = [camera.near, camera.far]
  metadata["scale_bar"] = {"length": bar_length, "start": vector(bar_start), "end": vector(bar_end)}

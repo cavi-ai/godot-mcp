@@ -141,22 +141,17 @@ class PoseReviewTests(unittest.TestCase):
                     command, timeout, evidence, label, problem=problem, checked=checked
                 ):
                     (evidence / (label + ".stderr")).write_text("")
-                    if label == "import":
-                        project = Path(command[command.index("--path") + 1])
-                        self.assertIn(
-                            'include_filter="pose.json"',
-                            (project / "export_presets.cfg").read_text(),
-                        )
-                        self.assertEqual(
-                            json.loads((project / "pose.json").read_text()), self.pose
-                        )
-                        checked.append(project)
-                    elif label == "export":
+                    if label == "export":
                         Path(command[-1]).parent.joinpath("index.wasm").write_bytes(
                             b"wasm"
                         )
                     elif label == "browser":
                         output = Path(command[-1])
+                        chosen = json.loads(
+                            (output.parent / review.SELECTION_FILE).read_text()
+                        )
+                        self.assertEqual(chosen["pose"], self.pose)
+                        checked.append(output.parent)
                         output.write_bytes(b"png")
                         metadata = {
                             "player": self.pose["player"],
@@ -170,7 +165,7 @@ class PoseReviewTests(unittest.TestCase):
                             json.dumps({"pose": metadata})
                         )
                         if problem == "config":
-                            (checked[0] / "pose.json").write_text("{}")
+                            (checked[0] / review.SELECTION_FILE).write_text("{}")
                         if problem == "source":
                             (checked[0] / "subject.glb").write_bytes(b"changed")
                     return "fixture"
@@ -186,7 +181,7 @@ class PoseReviewTests(unittest.TestCase):
                     ),
                     self.assertRaisesRegex(
                         Exception,
-                        "Pose configuration changed|Rendered pose does not match|Copied project changed",
+                        "Copied subject or selection changed|Rendered pose does not match",
                     ),
                 ):
                     review.capture(root, "review")

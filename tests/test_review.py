@@ -458,18 +458,66 @@ class OwnershipTests(unittest.TestCase):
 
 
 class RuntimeCacheTests(unittest.TestCase):
-    def test_same_runtime_is_shared_by_hardlink(self):
-        from godot_mcp.review import share_runtime
+    def test_reviews_share_one_cached_runtime_export(self):
+        import json
+        import os
+        from unittest.mock import patch
+
+        from godot_mcp.review import SELECTION_FILE, capture
 
         with TemporaryDirectory() as d:
             root = Path(d)
-            a = root / "a"
-            b = root / "b"
-            a.write_bytes(b"runtime")
-            b.write_bytes(b"runtime")
-            share_runtime(root, a)
-            share_runtime(root, b)
-            self.assertEqual(a.stat().st_ino, b.stat().st_ino)
+            (root / "mesh.glb").write_bytes(glb({}))
+            tool = root / "tool"
+            tool.write_text("tool")
+            env = {
+                key: str(tool)
+                for key in (
+                    "CAVI_GODOT_BIN",
+                    "CAVI_GODOT_WEB_TEMPLATE",
+                    "CAVI_CHROMIUM_BIN",
+                    "CAVI_NODE_BIN",
+                )
+            }
+
+            def fake_run(command, timeout, evidence, label):
+                (evidence / (label + ".stderr")).write_text("")
+                if label == "export":
+                    (Path(command[-1]).parent / "index.wasm").write_bytes(b"wasm")
+                if label == "browser":
+                    path = Path(command[-1])
+                    path.write_bytes(b"png")
+                    Path(str(path) + ".json").write_text(
+                        '{"camera_frame":{"center":[0,0,0],"distance":1},"geometry_preview_surfaces":0}'
+                    )
+                return "fixture"
+
+            receipts = {}
+            with (
+                patch.dict(os.environ, env),
+                patch("importlib.metadata.version", return_value="fixture"),
+                patch("godot_mcp.review.run_owned", side_effect=fake_run),
+                patch(
+                    "godot_mcp.review.run_with_browser",
+                    side_effect=lambda command, profile, task, evidence: task(1),
+                ),
+            ):
+                for name, view in (("first", "front"), ("second", "side")):
+                    prepare(root, "mesh.glb", name, view=view)
+                    receipts[name] = capture(root, name)
+                self.assertEqual(inspect(root, "second")["state"], "captured")
+            bundles = {name: root / name / r["bundle"] for name, r in receipts.items()}
+            key = receipts["first"]["project"]["runtime_export"]
+            self.assertEqual(receipts["second"]["project"]["runtime_export"], key)
+            cached = root / ".godot-review-runtime" / key / "index.wasm"
+            for bundle in bundles.values():
+                self.assertEqual(
+                    (bundle / "index.wasm").stat().st_ino, cached.stat().st_ino
+                )
+            self.assertEqual(
+                json.loads((bundles["second"] / SELECTION_FILE).read_text())["view"],
+                "side",
+            )
 
 
 class TextureTests(unittest.TestCase):

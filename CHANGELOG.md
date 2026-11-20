@@ -23,6 +23,7 @@
 - Inspection and motion reports give `units` as `metres`; motion reports replace `Godot scene units`.
 - Inspection counts surface vertices, indices and UV sets without copying mesh arrays.
 - The review scene lights the asset with a neutral grey sky for ambient light and reflections and uses AgX tonemapping; captured scene metadata records `renderer`.
+- Capture reuses one Web export per review runtime, Godot editor and Web template from `.godot-review-runtime` instead of importing and exporting every review; the scene loads `subject.glb` and `selection.json` from the bundle with Godot's runtime glTF importer, and the receipt's `project` records `runtime_export` and `selection.json`.
 
 ### Fixed
 

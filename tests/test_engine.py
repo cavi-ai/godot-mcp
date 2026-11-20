@@ -36,6 +36,7 @@ class EngineTests(unittest.TestCase):
             [
                 {
                     "duration": 1.0,
+                    "keys": 31,
                     "name": "Slide",
                     "player": "/subject/AnimationPlayer",
                     "tracks": 1,
@@ -63,6 +64,46 @@ class EngineTests(unittest.TestCase):
         length = struct.unpack("<f", struct.pack("<f", 11 / 24))[0]
         self.assertEqual([clip["duration"] for clip in report["clips"]], [length])
         self.assertEqual(report["units"], "metres")
+
+    def test_inspection_reports_asset_qa_metrics(self):
+        (self.root / "flawed.glb").write_bytes(
+            textured_cubes(2, slide="Slide", flawed=True)
+        )
+        report = inspection.inspect_asset(self.root, "flawed.glb", "flawed")["report"]
+        qa = report["qa"]
+        self.assertEqual(
+            {key: value for key, value in qa.items() if key != "bounds"},
+            {
+                "triangles": 24,
+                "vertices": 48,
+                "degenerate_triangles": 2,
+                "uv0_outside_unit_surfaces": 2,
+                "materials": 1,
+                "textures": 1,
+                "texture_rgba8_bytes": 20,
+                "max_texture_size": 2,
+                "npot_textures": 0,
+                "max_bone_influences": 0,
+                "max_blend_shapes": 0,
+                "mirrored_meshes": 1,
+                "non_uniform_scale_meshes": 1,
+                "animation_keys": 31,
+            },
+        )
+        box = qa["bounds"]["position"] + qa["bounds"]["size"]
+        for actual, expected in zip(box, [-0.5, -1, -0.5, 2.4, 2, 1]):
+            self.assertAlmostEqual(actual, expected, places=5)
+        self.assertEqual(
+            [
+                (s["degenerate_triangles"], s["uv0_outside_unit"])
+                for s in report["surfaces"]
+            ],
+            [(1, True), (1, True)],
+        )
+        self.assertEqual([clip["keys"] for clip in report["clips"]], [31])
+        (self.root / "rig.glb").write_bytes(skinned_cube(lift=1.0))
+        rig = inspection.inspect_asset(self.root, "rig.glb", "rig")["report"]
+        self.assertEqual(rig["qa"]["max_bone_influences"], 4)
 
     def test_motion_samples_the_clip(self):
         result = motion.inspect_motion(

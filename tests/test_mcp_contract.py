@@ -202,6 +202,22 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                         {"source": "asset.glb", "directory": "bad", "view": "wrong"},
                     ),
                     (
+                        "godot_asset_inspect",
+                        {
+                            "source": "asset.glb",
+                            "directory": "bad",
+                            "budget": {"triangles": -1},
+                        },
+                    ),
+                    (
+                        "godot_asset_inspect",
+                        {
+                            "source": "asset.glb",
+                            "directory": "bad",
+                            "budget": {"triangles": 10, "surprise": 1},
+                        },
+                    ),
+                    (
                         "godot_review_prepare",
                         {
                             "source": "../outside.glb",

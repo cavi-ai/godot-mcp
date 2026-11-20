@@ -105,6 +105,31 @@ class EngineTests(unittest.TestCase):
         rig = inspection.inspect_asset(self.root, "rig.glb", "rig")["report"]
         self.assertEqual(rig["qa"]["max_bone_influences"], 4)
 
+    def test_inspection_checks_and_records_a_budget(self):
+        (self.root / "flawed.glb").write_bytes(textured_cubes(2, flawed=True))
+        limits = {
+            "triangles": 24,
+            "draw_calls": 1,
+            "mirrored_meshes": 0,
+            "base_offset": 1.0,
+        }
+        result = inspection.inspect_asset(self.root, "flawed.glb", "budget", limits)
+        checks = result["budget"]["checks"]
+        self.assertEqual(
+            [(c["rule"], c["limit"], c["within"]) for c in checks],
+            [
+                ("triangles", 24, True),
+                ("draw_calls", 1, False),
+                ("mirrored_meshes", 0, False),
+                ("base_offset", 1.0, False),
+            ],
+        )
+        self.assertEqual([c["value"] for c in checks[:3]], [24, 2, 1])
+        self.assertAlmostEqual(checks[3]["value"], math.hypot(0.7, 1), places=5)
+        self.assertFalse(result["budget"]["within"])
+        receipt = json.loads((self.root / "budget" / "receipt.json").read_text())
+        self.assertEqual(receipt["budget"], result["budget"])
+
     def test_motion_samples_the_clip(self):
         result = motion.inspect_motion(
             self.root,

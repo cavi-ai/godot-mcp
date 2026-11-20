@@ -57,6 +57,21 @@ class EngineInputs(Result):
     provider: dict[str, Any]
 
 
+class BudgetCheck(Result):
+    rule: str
+    limit: int | float
+    value: int | float | None
+    within: bool
+
+
+class BudgetResult(Result):
+    """The requested limits, each limit's measured value, and whether all are met."""
+
+    limits: dict[str, int | float]
+    checks: list[BudgetCheck]
+    within: bool
+
+
 class AssetInspection(Result):
     """A source-bound Godot scene report and the hash of its saved copy."""
 
@@ -65,6 +80,7 @@ class AssetInspection(Result):
     inputs: EngineInputs
     report_sha256: str
     report: dict[str, Any]
+    budget: BudgetResult | None = None
 
 
 class MotionInspection(Result):

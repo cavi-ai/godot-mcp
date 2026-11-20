@@ -7,6 +7,7 @@
 - Every tool declares an output schema for its result.
 - Inspection reports `qa` metrics for the whole scene: triangles, vertices, zero-area triangles, UV0 outside 0–1, materials, textures and their RGBA8 size, non-power-of-two textures, bone weights, blend shapes, mirrored and non-uniformly scaled meshes, animation keys and rest-pose bounds; surfaces and clips record their zero-area triangles, UV0 range and keys.
 - `godot_asset_inspect` takes a `budget` of upper limits on those metrics, draw calls, bones and the base offset from the scene origin, and records each check in the result and receipt.
+- Motion reports `qa` from 30 fps sampling of the whole clip: the loop seam between the first and last frame, the fastest node or bone movement and rotation, and root motion of top-level nodes and root bones.
 
 ### Changed
 

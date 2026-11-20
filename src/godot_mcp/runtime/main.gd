@@ -1,16 +1,13 @@
 extends Node3D
-const REQUIRE_POSE = POSE_ENABLED
-const ALL_VIEWS = ALL_VIEWS_ENABLED
-const REQUIRE_FRAMING = FRAMING_ENABLED
-const GEOMETRY_PREVIEW = GEOMETRY_PREVIEW_ENABLED
-const VIEW = VIEW_NAME
+const SELECTION_FILE = "selection.json"
 const VIEW_YAW = {"front": 0.0, "three-quarter": PI / 4, "side": PI / 2}
 const PITCH = 0.3
 const FOV = 45.0
+var view := "three-quarter"
 var camera: Camera3D
 var center: Vector3
 var distance := 1.0
-var yaw: float = VIEW_YAW[VIEW]
+var yaw: float = VIEW_YAW[view]
 var pitch := PITCH
 var initial_distance: float
 var dragging := false
@@ -25,15 +22,48 @@ var pose_time_label: Label
 var playback_elapsed := 0.0
 var view_callback
 
+# The exported runtime is shared by every review: each bundle serves its own subject
+# and selection next to it, and headless runs read them from the project.
+func fetch(name: String) -> PackedByteArray:
+ if not OS.has_feature("web"):
+  return FileAccess.get_file_as_bytes("res://" + name)
+ var request = HTTPRequest.new()
+ add_child(request)
+ var url = str(JavaScriptBridge.eval("new URL(" + JSON.stringify(name) + ", window.location.href).href"))
+ var result = [HTTPRequest.RESULT_CANT_CONNECT, 0, PackedStringArray(), PackedByteArray()]
+ if request.request(url) == OK:
+  result = await request.request_completed
+ request.queue_free()
+ if result[0] != HTTPRequest.RESULT_SUCCESS or result[1] != 200:
+  return PackedByteArray()
+ return result[3]
+
 func _ready():
- var model = load("res://subject.glb").instantiate()
+ var choice = JSON.parse_string((await fetch(SELECTION_FILE)).get_string_from_utf8())
+ if not choice is Dictionary or not VIEW_YAW.has(choice.get("view")):
+  push_error("Invalid review selection")
+  return
+ view = choice.view
+ yaw = VIEW_YAW[view]
+ var all_views = choice.get("all_views") == true
+ var geometry_preview = choice.get("geometry_preview") == true
+ var require_pose = choice.get("pose") != null
+ var require_framing = choice.get("framing") != null
+ var source = await fetch("subject.glb")
+ var document = GLTFDocument.new()
+ var state = GLTFState.new()
+ if source.is_empty() or document.append_from_buffer(source, "", state) != OK:
+  push_error("Subject GLB could not be loaded")
+  return
+ var model = document.generate_scene(state)
+ if model == null:
+  push_error("Subject scene could not be generated")
+  return
+ model.name = "subject"
  add_child(model)
  var pose_metadata = null
- if REQUIRE_POSE:
-  if not FileAccess.file_exists("res://pose.json"):
-   push_error("Pose configuration missing")
-   return
-  var selected = JSON.parse_string(FileAccess.get_file_as_string("res://pose.json"))
+ if require_pose:
+  var selected = choice.pose
   if not selected is Dictionary:
    push_error("Invalid pose configuration")
    return
@@ -67,7 +97,7 @@ func _ready():
   push_error("No mesh instances")
   return
  var geometry_preview_surfaces = 0
- if GEOMETRY_PREVIEW and not REQUIRE_POSE:
+ if geometry_preview and not require_pose:
   var shader = Shader.new()
   shader.code = """shader_type spatial;
 render_mode specular_disabled;
@@ -93,7 +123,7 @@ void fragment() {
     if array_mesh.surface_get_primitive_type(surface) == Mesh.PRIMITIVE_TRIANGLES:
      mesh.set_surface_override_material(surface, preview)
      geometry_preview_surfaces += 1
- if not REQUIRE_POSE and not GEOMETRY_PREVIEW:
+ if not require_pose and not geometry_preview:
   for mesh in meshes:
    if mesh.skin != null or not mesh.mesh is ArrayMesh:
     continue
@@ -110,7 +140,7 @@ void fragment() {
  var first = true
  for mesh in meshes:
   var local = mesh.get_aabb()
-  if REQUIRE_POSE and mesh.skin != null:
+  if require_pose and mesh.skin != null:
    local = posed_aabb(mesh)
   var b = mesh.global_transform * local
   bounds = b if first else bounds.merge(b)
@@ -120,8 +150,8 @@ void fragment() {
   push_error("Subject has no extent")
   return
  distance = fit_distance(bounds.size.length() / 2)
- if REQUIRE_FRAMING:
-  var frame = JSON.parse_string(FileAccess.get_file_as_string("res://framing.json"))
+ if require_framing:
+  var frame = choice.framing
   if not frame is Dictionary or not frame.has("center") or not frame.has("distance"):
    push_error("Invalid camera framing")
    return
@@ -189,7 +219,7 @@ void fragment() {
   "bounds_origin": [bounds.position.x, bounds.position.y, bounds.position.z],
   "bounds_size": [bounds.size.x, bounds.size.y, bounds.size.z], "units": "metres",
   "godot_version": Engine.get_version_info()}
- if REQUIRE_POSE:
+ if require_pose:
   metadata["pose"] = pose_metadata
  else:
   metadata["camera_frame"] = {"center": vector(center), "distance": camera.global_position.distance_to(center)}
@@ -204,14 +234,14 @@ void fragment() {
  var hud = CanvasLayer.new()
  add_child(hud)
  hud.add_child(label)
- if REQUIRE_POSE:
+ if require_pose:
   create_playback_controls(hud)
   update_playback_controls()
   publish_playback()
  await get_tree().process_frame
  await get_tree().process_frame
  if OS.has_feature("web"):
-  if ALL_VIEWS:
+  if all_views:
    view_callback = JavaScriptBridge.create_callback(select_capture_view)
    JavaScriptBridge.get_interface("window").godotReviewSetView = view_callback
   JavaScriptBridge.eval("window.godotReviewReady = " + JSON.stringify(metadata, "", true, true))
@@ -395,7 +425,7 @@ func _unhandled_input(event):
   update_camera()
 
  if event is InputEventKey and event.pressed and event.keycode == KEY_R:
-  yaw = VIEW_YAW[VIEW]
+  yaw = VIEW_YAW[view]
   pitch = PITCH
   distance = initial_distance
   update_camera()

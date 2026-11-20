@@ -861,19 +861,117 @@ def run_with_browser(command, profile, task, evidence):
         raise execution_error
 
 
-def share_runtime(root, wasm):
+RUNTIME_FILES = ("project.godot", "main.tscn", "main.gd")
+SELECTION_FILE = "selection.json"
+MANIFEST = "manifest.json"
+
+
+def scene_selection(receipt, fallback):
+    """The view and choices the review scene reads from selection.json."""
+    return {
+        "view": receipt["view"],
+        "pose": receipt.get("pose"),
+        "framing": receipt.get("framing"),
+        "all_views": receipt.get("all_views") is True,
+        "geometry_preview": fallback,
+    }
+
+
+def export_preset(template):
+    return (
+        '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\n'
+        'export_filter="all_resources"\ninclude_filter=""\nexclude_filter=""\n'
+        "[preset.0.options]\nvariant/thread_support=false\n"
+        "custom_template/release=" + json.dumps(str(template)) + "\n"
+    )
+
+
+def runtime_export(root, tools, inputs, evidence, temp):
+    """The review runtime's Web export, built once per runtime and toolchain.
+
+    Returns the cached export directory, its key and its manifest of file
+    digests. The import and export logs go to ``evidence`` when it is built.
+    """
+    preset = export_preset(tools["CAVI_GODOT_WEB_TEMPLATE"])
+    identity = {
+        "runtime": {
+            name: inputs["provider"]["runtime"][name] for name in RUNTIME_FILES
+        },
+        "preset": preset,
+        "godot": inputs["tools"]["CAVI_GODOT_BIN"],
+        "template": inputs["tools"]["CAVI_GODOT_WEB_TEMPLATE"],
+    }
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     cache = inside(root, ".godot-review-runtime")
     cache.mkdir(exist_ok=True)
-    fingerprint = digest(wasm, ARTIFACT_LIMIT)
-    target = cache / (fingerprint + ".wasm")
-    try:
-        os.link(wasm, target)
-    except FileExistsError:
-        if not target.is_file() or digest(target, ARTIFACT_LIMIT) != fingerprint:
-            raise ValueError("Shared runtime cache changed")
-    replacement = wasm.with_suffix(".shared")
-    os.link(target, replacement)
-    os.replace(replacement, wasm)
+    target = cache / key
+    if not target.exists():
+        project = Path(temp) / "runtime"
+        project.mkdir()
+        runtime = Path(__file__).parent / "runtime"
+        for name in RUNTIME_FILES:
+            shutil.copyfile(runtime / name, project / name)
+            if digest(project / name) != identity["runtime"][name]:
+                raise ValueError("Copied runtime changed")
+        (project / "export_presets.cfg").write_text(preset)
+        staged = Path(tempfile.mkdtemp(prefix=".export-", dir=cache))
+        try:
+            godot = str(tools["CAVI_GODOT_BIN"])
+            base = [godot, "--headless", "--path", str(project)]
+            imported = run_owned(
+                [*base, "--editor", "--import"], 120, evidence, "import"
+            )
+            if (
+                "ERROR:" in imported
+                or b"ERROR:" in (evidence / "import.stderr").read_bytes()
+            ):
+                raise RuntimeError(
+                    "Godot reported an import error; inspect the raw logs"
+                )
+            exported = run_owned(
+                [*base, "--export-release", "Web", str(staged / "index.html")],
+                120,
+                evidence,
+                "export",
+            )
+            if (
+                "ERROR:" in exported
+                or b"ERROR:" in (evidence / "export.stderr").read_bytes()
+            ):
+                raise RuntimeError(
+                    "Godot reported an export error; inspect the raw logs"
+                )
+            atomic_json(
+                staged / MANIFEST,
+                {
+                    p.name: digest(p, ARTIFACT_LIMIT)
+                    for p in staged.iterdir()
+                    if p.is_file()
+                },
+            )
+            try:
+                os.rename(staged, target)
+            except OSError:
+                if not target.is_dir():
+                    raise
+                shutil.rmtree(staged)  # Another capture published the same export.
+        except BaseException:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
+    manifest = files.load_json(target / MANIFEST)
+    if (
+        not isinstance(manifest, dict)
+        or not manifest
+        or any(
+            not isinstance(name, str)
+            or "/" in name
+            or name in (MANIFEST, SELECTION_FILE, "subject.glb")
+            or not isinstance(value, str)
+            for name, value in manifest.items()
+        )
+    ):
+        raise ValueError("Shared runtime cache changed")
+    return target, key, manifest
 
 
 def capture(root, directory):
@@ -916,17 +1014,6 @@ def capture(root, directory):
 validate_pose_scene = validate_scene
 
 
-def render_script(template, receipt, fallback):
-    """main.gd with the review's view and selection written in."""
-    return (
-        template.replace("VIEW_NAME", json.dumps(receipt["view"]))
-        .replace("POSE_ENABLED", "true" if "pose" in receipt else "false")
-        .replace("FRAMING_ENABLED", "true" if "framing" in receipt else "false")
-        .replace("GEOMETRY_PREVIEW_ENABLED", "true" if fallback else "false")
-        .replace("ALL_VIEWS_ENABLED", "true" if receipt.get("all_views") else "false")
-    )
-
-
 def capture_locked(root, directory):
     receipt = inspect(root, directory, include_status=False)
     dest = inside(root, directory)
@@ -948,87 +1035,30 @@ def capture_locked(root, directory):
         },
     )
     with tempfile.TemporaryDirectory(prefix=".godot-review-", dir=dest) as temp:
-        project = Path(temp) / "project"
-        project.mkdir()
-        for filename in ("project.godot", "main.tscn"):
-            shutil.copyfile(runtime / filename, project / filename)
-        shutil.copyfile(inside(root, receipt["source"]), project / "subject.glb")
-        if digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]:
+        export = Path(temp) / "bundle"
+        export.mkdir()
+        shutil.copyfile(inside(root, receipt["source"]), export / "subject.glb")
+        if digest(export / "subject.glb", LIMIT) != inputs["source_sha256"]:
             raise ValueError("Copied source changed")
         fallback = "pose" not in receipt and geometry_only(
-            read_glb(project / "subject.glb")
+            read_glb(export / "subject.glb")
         )
-        template = (runtime / "main.gd").read_bytes()
-        if (
-            hashlib.sha256(template).hexdigest()
-            != inputs["provider"]["runtime"]["main.gd"]
-        ):
-            raise ValueError("Copied runtime changed")
-        expected_script = render_script(template.decode(), receipt, fallback)
-        (project / "main.gd").write_text(expected_script)
-        if "pose" in receipt:
-            atomic_json(project / "pose.json", receipt["pose"])
-            pose_hash = digest(project / "pose.json")
-            if files.load_json(project / "pose.json") != receipt["pose"]:
-                raise ValueError("Copied pose configuration changed")
-        if "framing" in receipt:
-            atomic_json(project / "framing.json", receipt["framing"])
-            framing_hash = digest(project / "framing.json")
-            if files.load_json(project / "framing.json") != receipt["framing"]:
-                raise ValueError("Copied camera framing changed")
-        for filename in ("project.godot", "main.tscn"):
-            if digest(project / filename) != inputs["provider"]["runtime"][filename]:
-                raise ValueError("Copied runtime changed")
-        if (project / "main.gd").read_text() != expected_script:
-            raise ValueError("Copied runtime changed")
-        export = project / "bundle"
-        export.mkdir()
-        preset = (
-            '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\n'
-            'export_filter="all_resources"\ninclude_filter='
-            + json.dumps(
-                ",".join(
-                    name + ".json" for name in ("pose", "framing") if name in receipt
-                )
-            )
-            + '\nexclude_filter=""\n'
-            "[preset.0.options]\nvariant/thread_support=false\n"
-            "custom_template/release="
-            + json.dumps(str(tools["CAVI_GODOT_WEB_TEMPLATE"]))
-            + "\n"
+        chosen = scene_selection(receipt, fallback)
+        atomic_json(export / SELECTION_FILE, chosen)
+        selection_hash = digest(export / SELECTION_FILE)
+        if files.load_json(export / SELECTION_FILE) != chosen:
+            raise ValueError("Copied review selection changed")
+        cached, runtime_key, manifest = runtime_export(
+            root, tools, inputs, evidence, temp
         )
-        (project / "export_presets.cfg").write_text(preset)
+        for name, expected in manifest.items():
+            try:
+                os.link(cached / name, export / name)
+            except OSError:
+                shutil.copyfile(cached / name, export / name)
+            if digest(export / name, ARTIFACT_LIMIT) != expected:
+                raise ValueError("Shared runtime cache changed")
         godot = str(tools["CAVI_GODOT_BIN"])
-        imported = run_owned(
-            [godot, "--headless", "--path", str(project), "--editor", "--import"],
-            120,
-            evidence,
-            "import",
-        )
-        if (
-            "ERROR:" in imported
-            or b"ERROR:" in (evidence / "import.stderr").read_bytes()
-        ):
-            raise RuntimeError("Godot reported an import error; inspect the raw logs")
-        exported = run_owned(
-            [
-                godot,
-                "--headless",
-                "--path",
-                str(project),
-                "--export-release",
-                "Web",
-                str(export / "index.html"),
-            ],
-            120,
-            evidence,
-            "export",
-        )
-        if (
-            "ERROR:" in exported
-            or b"ERROR:" in (evidence / "export.stderr").read_bytes()
-        ):
-            raise RuntimeError("Godot reported an export error; inspect the raw logs")
 
         class QuietHandler(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
@@ -1073,20 +1103,11 @@ def capture_locked(root, directory):
                 thread.join()
         godot_version = run_owned([godot, "--version"], 10, evidence, "version").strip()
         if (
-            digest(project / "subject.glb", LIMIT) != inputs["source_sha256"]
-            or (project / "main.gd").read_text() != expected_script
+            digest(export / "subject.glb", LIMIT) != inputs["source_sha256"]
+            or digest(export / SELECTION_FILE) != selection_hash
+            or files.load_json(export / SELECTION_FILE) != chosen
         ):
-            raise ValueError("Copied project changed during capture")
-        if "pose" in receipt and (
-            digest(project / "pose.json") != pose_hash
-            or files.load_json(project / "pose.json") != receipt["pose"]
-        ):
-            raise ValueError("Pose configuration changed during capture")
-        if "framing" in receipt and (
-            digest(project / "framing.json") != framing_hash
-            or files.load_json(project / "framing.json") != receipt["framing"]
-        ):
-            raise ValueError("Camera framing changed during capture")
+            raise ValueError("Copied subject or selection changed during capture")
         inspect(root, directory, include_status=False)
         if input_snapshot(root, receipt, tools) != inputs:
             raise ValueError("Review input changed during capture")
@@ -1105,28 +1126,28 @@ def capture_locked(root, directory):
             validate_geometry_preview(scene, fallback)
         if receipt.get("all_views"):
             validate_view_files(export, receipt["view"])
-        share_runtime(root, export / "index.wasm")
         bundle = evidence / "bundle"
+        for name in RUNTIME_FILES:
+            shutil.copyfile(runtime / name, evidence / name)
+            if digest(evidence / name) != inputs["provider"]["runtime"][name]:
+                raise ValueError("Copied runtime changed")
+        (evidence / "export_presets.cfg").write_text(
+            export_preset(tools["CAVI_GODOT_WEB_TEMPLATE"])
+        )
+        shutil.copyfile(export / SELECTION_FILE, evidence / SELECTION_FILE)
         receipt["state"] = "captured"
         receipt["project"] = {
-            name: digest(project / name)
-            for name in (
-                "project.godot",
-                "main.gd",
-                "main.tscn",
-                "export_presets.cfg",
-                "subject.glb",
-            )
+            **{name: digest(evidence / name) for name in RUNTIME_FILES},
+            "export_presets.cfg": digest(evidence / "export_presets.cfg"),
+            "runtime_export": runtime_key,
+            SELECTION_FILE: selection_hash,
+            "subject.glb": inputs["source_sha256"],
         }
         receipt["inputs"] = inputs
         receipt["bundle"] = str(bundle.relative_to(dest))
         receipt["godot_version"] = godot_version
         receipt["renderer"] = "godot-web-compatibility-webgl2"
         receipt["scene"] = scene
-        if "framing" in receipt:
-            receipt["project"]["framing.json"] = framing_hash
-        if "pose" in receipt:
-            receipt["project"]["pose.json"] = pose_hash
         receipt["artifacts"] = {
             str((bundle / path.relative_to(export)).relative_to(dest)): digest(
                 path, ARTIFACT_LIMIT
@@ -1134,15 +1155,6 @@ def capture_locked(root, directory):
             for path in export.rglob("*")
             if path.is_file()
         }
-        for filename in (
-            "project.godot",
-            "main.gd",
-            "main.tscn",
-            "export_presets.cfg",
-            *(["pose.json"] if "pose" in receipt else []),
-            *(["framing.json"] if "framing" in receipt else []),
-        ):
-            shutil.copyfile(project / filename, evidence / filename)
         if receipt.get("all_views"):
             receipt["view_captures"] = {
                 view: {

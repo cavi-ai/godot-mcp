@@ -193,29 +193,23 @@ class EngineTests(unittest.TestCase):
             self.assertAlmostEqual(actual, expected, places=5)
 
     def review_scene(self, source, view, pose=None):
-        """The metadata the review scene reports when run headless on ``source``."""
+        """The metadata the review scene reports when run headless on ``source``.
+
+        The subject and selection are loose files the scene reads at run time;
+        nothing is imported.
+        """
         project = self.root / "review"
         project.mkdir()
         runtime = Path(review.__file__).parent / "runtime"
-        for name in ("project.godot", "main.tscn"):
+        for name in ("project.godot", "main.tscn", "main.gd"):
             shutil.copyfile(runtime / name, project / name)
         (project / "subject.glb").write_bytes(source)
-        selection = {"view": view}
-        if pose is not None:
-            (project / "pose.json").write_text(json.dumps(pose))
-            selection["pose"] = pose
-        template = (runtime / "main.gd").read_text()
-        (project / "main.gd").write_text(
-            review.render_script(template, selection, fallback=False)
+        receipt = {"view": view, **({} if pose is None else {"pose": pose})}
+        (project / review.SELECTION_FILE).write_text(
+            json.dumps(review.scene_selection(receipt, fallback=False))
         )
         godot = str(config.tools((config.GODOT,))[config.GODOT])
         base = [godot, "--headless", "--path", str(project)]
-        subprocess.run(
-            [*base, "--editor", "--import"],
-            check=True,
-            capture_output=True,
-            timeout=120,
-        )
         run = subprocess.run(
             [*base, "--quit-after", "30"],
             check=True,

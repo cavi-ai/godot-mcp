@@ -59,7 +59,7 @@ To open the interactive view, serve the receipt's relative `bundle` within the r
 python3 -m http.server --bind 127.0.0.1 --directory <review-directory>/<bundle>
 ```
 
-Stop the server after review. Godot's headless mode does not render; capture uses a Godot Web export with the Compatibility renderer and WebGL 2. The review does not establish gameplay, collision, traversal, room architecture or appearance in another engine. Perform final acceptance in the consuming engine.
+Stop the server after review. Godot's headless mode does not render; capture uses a Godot Web export with the Compatibility renderer and WebGL 2. The export is built once per review runtime, Godot editor and Web template and kept in the workspace's `.godot-review-runtime` directory. Each review bundle serves its `subject.glb` and `selection.json` beside the export, and the scene loads the GLB with Godot's runtime glTF importer, as inspection does. The review does not establish gameplay, collision, traversal, room architecture or appearance in another engine. Perform final acceptance in the consuming engine.
 
 If inspection fails, preserve its output directory and inspect the receipt and process logs before retrying. If a capture has an unknown outcome, use `godot_review_inspect` to examine the latest attempt. A pending cleanup marker blocks another capture; resolve the owned processes and output before removing it.
 

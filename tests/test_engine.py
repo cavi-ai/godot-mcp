@@ -154,6 +154,44 @@ class EngineTests(unittest.TestCase):
         self.assertTrue((output / "receipt.json").is_file())
         self.assertFalse((output / ".motion.pending").exists())
 
+    def test_motion_reports_speed_loop_seam_and_root_motion(self):
+        def qa(source, directory, animation):
+            return motion.inspect_motion(
+                self.root,
+                source,
+                directory,
+                "/subject/AnimationPlayer",
+                animation,
+                [0, 1],
+            )["report"]["qa"]
+
+        slide = qa("asset.glb", "slide", "Slide")
+        self.assertEqual((slide["frame_rate"], slide["frames"]), (30, 31))
+        self.assertAlmostEqual(slide["loop_seam"]["position"], 1.0, places=5)
+        self.assertEqual(slide["loop_seam"]["rotation"], 0.0)
+        speed = slide["max_linear_speed"]
+        self.assertAlmostEqual(speed["value"], 1.0, places=4)
+        self.assertEqual((speed["path"], speed["bone"]), ("/subject/Cube0", None))
+        self.assertEqual(
+            slide["max_angular_speed"], {"value": 0.0, "path": None, "bone": None}
+        )
+        moved = {
+            (m["path"], m["bone"]): m["displacement"] for m in slide["root_motion"]
+        }
+        self.assertEqual(
+            set(moved), {("/subject/Cube0", None), ("/subject/Cube1", None)}
+        )
+        for actual, expected in zip(moved[("/subject/Cube0", None)], [1, 0, 0]):
+            self.assertAlmostEqual(actual, expected, places=5)
+        (self.root / "rig.glb").write_bytes(skinned_cube(lift=2.0))
+        lift = qa("rig.glb", "lift", "Lift")
+        self.assertAlmostEqual(lift["max_linear_speed"]["value"], 2.0, places=4)
+        self.assertEqual(lift["max_linear_speed"]["bone"], "Bone")
+        bone = [m for m in lift["root_motion"] if m["bone"] == "Bone"]
+        self.assertEqual(len(bone), 1)
+        for actual, expected in zip(bone[0]["displacement"], [0, 2, 0]):
+            self.assertAlmostEqual(actual, expected, places=5)
+
     def review_scene(self, source, view, pose=None):
         """The metadata the review scene reports when run headless on ``source``."""
         project = self.root / "review"

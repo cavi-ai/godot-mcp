@@ -11,6 +11,17 @@ from test_support import animated, missing_tools, textured_cubes
 
 from godot_mcp import motion, review
 
+STILL = {"value": 0, "path": None, "bone": None}
+QA = {
+    "frame_rate": 30,
+    "frames": 31,
+    "seconds_per_frame": 1 / 30,
+    "loop_seam": {"position": 0, "rotation": 0},
+    "max_linear_speed": STILL,
+    "max_angular_speed": STILL,
+    "root_motion": [],
+}
+
 
 class MotionRequestTests(unittest.TestCase):
     def test_times_are_bounded_finite_and_strict(self):
@@ -48,9 +59,28 @@ class MotionRequestTests(unittest.TestCase):
             "nodes": [{"path": "/n", "type": "Node3D"}],
             "bones": [],
             "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
+            "qa": {
+                **QA,
+                "max_linear_speed": {"value": 1.0, "path": "/n", "bone": None},
+                "root_motion": [
+                    {"path": "/n", "bone": None, "displacement": [1, 0, 0]}
+                ],
+            },
         }
         motion.validate_report(report, "/p", "walk", [0, 1])
+        moving = report["qa"]["max_linear_speed"]
         for bad in (
+            {**report, "qa": {**QA, "frames": 1}},
+            {**report, "qa": {**QA, "seconds_per_frame": 0.5}},
+            {**report, "qa": {**QA, "max_linear_speed": {**moving, "path": "/x"}}},
+            {**report, "qa": {**QA, "max_linear_speed": {**moving, "path": None}}},
+            {
+                **report,
+                "qa": {
+                    **QA,
+                    "root_motion": [{"path": "/n", "bone": None, "displacement": []}],
+                },
+            },
             {**report, "player": "/other"},
             {**report, "nodes": []},
             {**report, "samples": [sample]},
@@ -93,6 +123,7 @@ class MotionRequestTests(unittest.TestCase):
             "nodes": [{"path": "/n", "type": "Node3D"}],
             "bones": [],
             "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
+            "qa": QA,
         }
         motion.validate_report(report, "/p", "clip", [1 / 3, 1])
         report["samples"][0] = {**sample, "normalized_time": 0.333333333333333}
@@ -117,6 +148,10 @@ class MotionRequestTests(unittest.TestCase):
             "nodes": [{"path": "/s", "type": "Skeleton3D"}],
             "bones": [b],
             "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
+            "qa": {
+                **QA,
+                "max_angular_speed": {"value": 2.0, "path": "/s", "bone": "root"},
+            },
         }
         motion.validate_report(report, "/p", "walk", [0, 1])
         for bad in (
@@ -210,6 +245,7 @@ class MotionRequestTests(unittest.TestCase):
                 "nodes": [{"path": "/n", "type": "Node3D"}],
                 "bones": [],
                 "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
+                "qa": QA,
             }
 
             def run(command, timeout, dest, name):

@@ -4,9 +4,11 @@ import itertools
 import math
 
 from . import engine, inspection, review
-from .shapes import number, transform
+from .shapes import number, transform, vector
 
 REPORT_LIMIT = 4 * 1024 * 1024
+FRAME_RATE = 30
+MAX_FRAMES = 1801
 
 
 def validate_times(times):
@@ -103,7 +105,67 @@ def validate_report(report, player, animation, times):
             )
         ):
             raise ValueError("Motion sample is incomplete or has the wrong time")
+    validate_qa(report.get("qa"), duration, nodes, bones)
     return report
+
+
+def validate_qa(qa, duration, nodes, bones):
+    """The 30 fps motion metrics, refused when a value or its target is invalid."""
+    paths = {n["path"] for n in nodes}
+    bone_keys = {(b["skeleton"], b["name"]) for b in bones}
+
+    def target(value, allow_none):
+        path, bone = value.get("path"), value.get("bone")
+        if path is None and bone is None:
+            return allow_none
+        return (bone is None and path in paths) or (
+            isinstance(bone, str) and (path, bone) in bone_keys
+        )
+
+    def speed(value):
+        return (
+            isinstance(value, dict)
+            and set(value) == {"value", "path", "bone"}
+            and number(value["value"])
+            and value["value"] >= 0
+            and target(value, value["value"] == 0)
+            and (value["value"] == 0) is (value["path"] is None)
+        )
+
+    if (
+        not isinstance(qa, dict)
+        or set(qa)
+        != {
+            "frame_rate",
+            "frames",
+            "seconds_per_frame",
+            "loop_seam",
+            "max_linear_speed",
+            "max_angular_speed",
+            "root_motion",
+        }
+        or qa["frame_rate"] != FRAME_RATE
+        or type(qa["frames"]) is not int
+        or not 2 <= qa["frames"] <= MAX_FRAMES
+        or not number(qa["seconds_per_frame"])
+        or not math.isclose(
+            qa["seconds_per_frame"], duration / (qa["frames"] - 1), rel_tol=1e-6
+        )
+        or not isinstance(qa["loop_seam"], dict)
+        or set(qa["loop_seam"]) != {"position", "rotation"}
+        or any(not number(v) or v < 0 for v in qa["loop_seam"].values())
+        or not speed(qa["max_linear_speed"])
+        or not speed(qa["max_angular_speed"])
+        or not isinstance(qa["root_motion"], list)
+        or any(
+            not isinstance(m, dict)
+            or set(m) != {"path", "bone", "displacement"}
+            or not target(m, False)
+            or not vector(m["displacement"])
+            for m in qa["root_motion"]
+        )
+    ):
+        raise ValueError("Motion QA metrics are invalid")
 
 
 def inspect_motion(root, source, directory, player, animation, normalized_times):

@@ -10,6 +10,7 @@ from cavi_mcp_core.server import READ_ONLY, WRITES, Server
 from pydantic import Field, StrictBool
 
 from . import config, inspection, motion, review
+from .budget import Budget
 from .contracts import (
     AssetInspection,
     MotionInspection,
@@ -80,9 +81,20 @@ async def godot_review_capture(directory: str) -> Review:
 
 
 @mcp.tool(annotations=WRITES)
-async def godot_asset_inspect(source: str, directory: str) -> AssetInspection:
-    """Inspect a self-contained GLB with Godot and save a source-bound scene report."""
-    return await call(inspection.inspect_asset, workspace(), source, directory)
+async def godot_asset_inspect(
+    source: str, directory: str, budget: Budget | None = None
+) -> AssetInspection:
+    """Inspect a self-contained GLB with Godot and save a source-bound scene report.
+
+    A budget's limits are checked against the report and recorded in the receipt.
+    """
+    return await call(
+        inspection.inspect_asset,
+        workspace(),
+        source,
+        directory,
+        None if budget is None else budget.model_dump(exclude_none=True),
+    )
 
 
 @mcp.tool(annotations=WRITES)

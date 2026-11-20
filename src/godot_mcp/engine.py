@@ -10,12 +10,25 @@ from cavi_mcp_core.contracts import OperationUnknown
 from . import config, review
 
 
-def run(src, dest, source, *, kind, name, script, settings, report_limit, validate):
+def run(
+    src,
+    dest,
+    source,
+    *,
+    kind,
+    name,
+    script,
+    settings,
+    report_limit,
+    validate,
+    assess=None,
+):
     """Run ``script`` headless on a copy of ``src`` and record it in the new ``dest``.
 
     ``dest`` receives owner.json, inputs.json, the engine logs, report.json and
-    receipt.json. ``settings`` is written as the script's config.json. The pending
-    marker and project stay when process cleanup is unverified.
+    receipt.json. ``settings`` is written as the script's config.json. ``assess``
+    maps the validated report to extra receipt fields. The pending marker and
+    project stay when process cleanup is unverified.
     """
     godot = config.tools((config.GODOT,))[config.GODOT]
     runtime = Path(__file__).parent / "runtime" / script
@@ -74,6 +87,7 @@ def run(src, dest, source, *, kind, name, script, settings, report_limit, valida
         report = validate(
             files.parse_json(files.read_bytes(project / "report.json", report_limit))
         )
+        assessment = {} if assess is None else assess(report)
         if (
             review.digest(src, review.LIMIT) != snapshot["source_sha256"]
             or review.digest(godot) != snapshot["engine_sha256"]
@@ -87,6 +101,7 @@ def run(src, dest, source, *, kind, name, script, settings, report_limit, valida
             **request,
             "inputs": snapshot,
             "report_sha256": review.digest(dest / "report.json", report_limit),
+            **assessment,
         }
         review.atomic_json(dest / "receipt.json", receipt)
         shutil.rmtree(project)

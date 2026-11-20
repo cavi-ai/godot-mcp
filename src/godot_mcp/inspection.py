@@ -1,6 +1,6 @@
 """Source-bound Godot runtime inspection of self-contained GLB files."""
 
-from . import engine, review
+from . import budget, engine, review
 from .shapes import count, number, transform, vector
 
 REPORT_LIMIT = 1024 * 1024
@@ -181,10 +181,13 @@ def validate_report(report):
     return report
 
 
-def inspect_asset(root, source, directory):
+def inspect_asset(root, source, directory, limits=None):
+    """Inspect ``source``; ``limits`` from a `budget.Budget` are checked and recorded."""
     src = review.source_glb(root, source)
     dest = review.new_output(root, directory)
     validate_glb(src)
+    if limits is not None:
+        limits = budget.Budget.model_validate(limits).model_dump(exclude_none=True)
     return engine.run(
         src,
         dest,
@@ -195,4 +198,7 @@ def inspect_asset(root, source, directory):
         settings=None,
         report_limit=REPORT_LIMIT,
         validate=validate_report,
+        assess=None
+        if limits is None
+        else lambda report: {"budget": budget.evaluate(limits, report)},
     )

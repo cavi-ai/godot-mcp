@@ -105,7 +105,9 @@ class InspectionTests(unittest.TestCase):
             "primitive": 3,
             "vertices": 3,
             "triangles": 1,
+            "degenerate_triangles": 0,
             "uv0": False,
+            "uv0_outside_unit": False,
             "uv1": False,
             "material": {
                 "name": "",
@@ -124,6 +126,23 @@ class InspectionTests(unittest.TestCase):
                 "bones": 0,
                 "clips": 1,
                 "unsupported_primitives": 0,
+            },
+            "qa": {
+                "triangles": 1,
+                "vertices": 3,
+                "degenerate_triangles": 0,
+                "uv0_outside_unit_surfaces": 0,
+                "materials": 1,
+                "textures": 1,
+                "texture_rgba8_bytes": 4,
+                "max_texture_size": 1,
+                "npot_textures": 0,
+                "max_bone_influences": 0,
+                "max_blend_shapes": 0,
+                "mirrored_meshes": 0,
+                "non_uniform_scale_meshes": 0,
+                "animation_keys": 2,
+                "bounds": b,
             },
             "truncated": {
                 "nodes": False,
@@ -162,6 +181,7 @@ class InspectionTests(unittest.TestCase):
                     "name": "Walk",
                     "duration": 1.0,
                     "tracks": 1,
+                    "keys": 2,
                 }
             ],
         }
@@ -211,6 +231,10 @@ class InspectionTests(unittest.TestCase):
                     {**report, "truncated": {**report["truncated"], "nodes": True}},
                     {**report, "totals": {**report["totals"], "surfaces": 0}},
                     {**report, "clips": [{**report["clips"][0], "duration": -1}]},
+                    {**report, "qa": {**report["qa"], "triangles": 2}},
+                    {**report, "qa": {**report["qa"], "max_bone_influences": 3}},
+                    {**report, "qa": {**report["qa"], "animation_keys": 3}},
+                    {**report, "surfaces": [{**surface, "uv0_outside_unit": True}]},
                     {
                         **report,
                         "nodes": [

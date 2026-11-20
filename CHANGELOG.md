@@ -5,6 +5,7 @@
 ### Added
 
 - Every tool declares an output schema for its result.
+- Inspection reports `qa` metrics for the whole scene: triangles, vertices, zero-area triangles, UV0 outside 0–1, materials, textures and their RGBA8 size, non-power-of-two textures, bone weights, blend shapes, mirrored and non-uniformly scaled meshes, animation keys and rest-pose bounds; surfaces and clips record their zero-area triangles, UV0 range and keys.
 
 ### Changed
 

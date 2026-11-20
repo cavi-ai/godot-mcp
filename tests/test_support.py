@@ -95,11 +95,12 @@ def raw_glb(document):
     )
 
 
-def textured_cubes(count=1, slide=None, size=1.0):
+def textured_cubes(count=1, slide=None, size=1.0, flawed=False):
     """A small embedded-texture fixture; multiple nodes share one cube mesh.
 
     ``slide`` names a one-second clip moving the first cube from x = 0 to x = 1.
-    ``size`` is the cube edge length in metres.
+    ``size`` is the cube edge length in metres. ``flawed`` collapses one
+    triangle, doubles the UVs, and mirrors and stretches the last cube.
     """
 
     def chunk(kind, payload):
@@ -125,8 +126,10 @@ def textured_cubes(count=1, slide=None, size=1.0):
         ((-1, 1, 1), (1, 1, 1), (1, 1, -1), (-1, 1, -1)),
         ((-1, -1, -1), (1, -1, -1), (1, -1, 1), (-1, -1, 1)),
     ]
+    if flawed:
+        faces[5] = (*faces[5][:3], faces[5][2])
     positions = [c * size / 2 for face in faces for point in face for c in point]
-    uvs = [v for _ in faces for v in (0, 1, 1, 1, 1, 0, 0, 0)]
+    uvs = [v * (2 if flawed else 1) for _ in faces for v in (0, 1, 1, 1, 1, 0, 0, 0)]
     indices = [
         index
         for i in range(6)
@@ -219,6 +222,8 @@ def textured_cubes(count=1, slide=None, size=1.0):
                 "samplers": [{"input": 3, "output": 4}],
             }
         ]
+    if flawed:
+        data["nodes"][-1]["scale"] = [-1, 2, 1]
     raw = json.dumps(data).encode()
     raw += b" " * (-len(raw) % 4)
     binary += b"\0" * (-len(binary) % 4)

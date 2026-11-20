@@ -6,6 +6,22 @@ from .shapes import count, number, transform, vector
 REPORT_LIMIT = 1024 * 1024
 LIMITS = {"nodes": 256, "surfaces": 256, "bones": 256, "clips": 128}
 TRIANGLES = 3
+QA_COUNTS = (
+    "triangles",
+    "vertices",
+    "degenerate_triangles",
+    "uv0_outside_unit_surfaces",
+    "materials",
+    "textures",
+    "texture_rgba8_bytes",
+    "max_texture_size",
+    "npot_textures",
+    "max_bone_influences",
+    "max_blend_shapes",
+    "mirrored_meshes",
+    "non_uniform_scale_meshes",
+    "animation_keys",
+)
 
 
 def validate_glb(path):
@@ -60,6 +76,19 @@ def validate_report(report):
         )
     ):
         raise ValueError("Inspection report totals or limits differ")
+    qa = report.get("qa")
+    if (
+        not isinstance(qa, dict)
+        or set(qa) != {*QA_COUNTS, "bounds"}
+        or not all(count(qa[key]) for key in QA_COUNTS)
+        or qa["max_bone_influences"] not in (0, 4, 8)
+        or qa["degenerate_triangles"] > qa["triangles"]
+        or qa["uv0_outside_unit_surfaces"] > totals["surfaces"]
+        or qa["npot_textures"] > qa["textures"]
+        or (qa["max_texture_size"] == 0) is not (qa["textures"] == 0)
+        or not (qa["bounds"] is None or bounds(qa["bounds"]))
+    ):
+        raise ValueError("Inspection QA metrics are invalid")
     nodes = report["nodes"]
     if any(
         not isinstance(n, dict)
@@ -92,17 +121,34 @@ def validate_report(report):
         or not count(s.get("primitive"))
         or not count(s.get("vertices"))
         or "triangles" not in s
+        or "degenerate_triangles" not in s
         or not (
             count(s["triangles"])
+            and count(s["degenerate_triangles"])
+            and s["degenerate_triangles"] <= s["triangles"]
             if s["primitive"] == TRIANGLES
-            else s["triangles"] is None
+            else s["triangles"] is None and s["degenerate_triangles"] is None
         )
         or type(s.get("uv0")) is not bool
         or type(s.get("uv1")) is not bool
+        or s.get("uv0_outside_unit") not in (False, s["uv0"])
+        or type(s["uv0_outside_unit"]) is not bool
         or not material(s.get("material"))
         for s in surfaces
     ) or len({(s["node"], s["surface"]) for s in surfaces}) != len(surfaces):
         raise ValueError("Inspection surface inventory is invalid")
+    if not truncated["surfaces"] and [
+        qa["triangles"],
+        qa["vertices"],
+        qa["degenerate_triangles"],
+        qa["uv0_outside_unit_surfaces"],
+    ] != [
+        sum(s["triangles"] or 0 for s in surfaces),
+        sum(s["vertices"] for s in surfaces),
+        sum(s["degenerate_triangles"] or 0 for s in surfaces),
+        sum(s["uv0_outside_unit"] for s in surfaces),
+    ]:
+        raise ValueError("Inspection QA totals differ from its surfaces")
     bones = report["bones"]
     if any(
         not isinstance(b, dict)
@@ -126,9 +172,12 @@ def validate_report(report):
         or not number(c.get("duration"))
         or c["duration"] < 0
         or not count(c.get("tracks"))
+        or not count(c.get("keys"))
         for c in clips
     ) or len({(c["player"], c["name"]) for c in clips}) != len(clips):
         raise ValueError("Inspection clip inventory is invalid")
+    if not truncated["clips"] and qa["animation_keys"] != sum(c["keys"] for c in clips):
+        raise ValueError("Inspection QA totals differ from its clips")
     return report
 
 

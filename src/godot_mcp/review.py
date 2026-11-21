@@ -3,6 +3,7 @@
 import hashlib
 import http.server
 import json
+import math
 import os
 import re
 import shutil
@@ -18,12 +19,13 @@ from datetime import UTC, datetime
 from functools import partial
 from importlib.metadata import version as package_version
 from pathlib import Path
+from typing import Annotated
 
 from cavi_mcp_core import files, journal, owned_exec, processes, workspace
 from cavi_mcp_core.contracts import OperationUnknown
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import config
-from .framing import Framing, validate_frame
 from .pose import Pose, validate_scene
 from .shapes import number, vector
 
@@ -31,6 +33,28 @@ LIMIT = 64 * 1024 * 1024
 ARTIFACT_LIMIT = 256 * 1024 * 1024
 PLAIN_CLIP = re.compile(r"[A-Za-z0-9 _-]+")
 CLIP_TOLERANCE = 1e-4
+
+Finite = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+
+
+class Framing(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    center: Annotated[list[Finite], Field(min_length=3, max_length=3)]
+    distance: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
+
+
+def validate_frame(observed, requested=None):
+    frame = Framing.model_validate(observed).model_dump()
+    if requested is not None:
+        expected = Framing.model_validate(requested).model_dump()
+        actual_values = [*frame["center"], frame["distance"]]
+        expected_values = [*expected["center"], expected["distance"]]
+        if any(
+            not math.isclose(a, b, rel_tol=1e-5, abs_tol=1e-5)
+            for a, b in zip(actual_values, expected_values, strict=True)
+        ):
+            raise ValueError("Rendered camera frame differs from requested framing")
+    return frame
 
 
 class CleanupUnverified(OperationUnknown):

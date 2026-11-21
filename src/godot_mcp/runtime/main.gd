@@ -21,6 +21,7 @@ var pose_slider: HSlider
 var pose_time_label: Label
 var playback_elapsed := 0.0
 var view_callback
+var camera_fit = null
 
 # The exported runtime is shared by every review: each bundle serves its own subject
 # and selection next to it, and headless runs read them from the project.
@@ -157,6 +158,7 @@ void fragment() {
    return
   center = Vector3(frame.center[0], frame.center[1], frame.center[2])
   distance = float(frame.distance)
+  camera_fit = null
  initial_distance = distance
  camera = Camera3D.new()
  add_child(camera)
@@ -224,6 +226,8 @@ void fragment() {
  else:
   metadata["camera_frame"] = {"center": vector(center), "distance": camera.global_position.distance_to(center)}
   metadata["geometry_preview_surfaces"] = geometry_preview_surfaces
+ if camera_fit != null:
+  metadata["camera_fit"] = camera_fit
  metadata["renderer"] = {"method": RenderingServer.get_current_rendering_method(),
   "driver": RenderingServer.get_current_rendering_driver_name(), "adapter": RenderingServer.get_video_adapter_name()}
  metadata["camera_position"] = vector(camera.global_position)
@@ -251,6 +255,7 @@ void fragment() {
 func fit_distance(radius: float) -> float:
  # The bounding sphere touches the narrower of the vertical and horizontal fields of view.
  var size = get_viewport().get_visible_rect().size
+ camera_fit = {"fov": FOV, "viewport": [size.x, size.y], "radius": radius}
  var half_vertical = deg_to_rad(FOV) / 2
  var half_horizontal = atan(tan(half_vertical) * size.x / size.y)
  return radius / sin(min(half_vertical, half_horizontal))

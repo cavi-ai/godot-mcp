@@ -225,8 +225,13 @@ class EngineTests(unittest.TestCase):
         scene = self.review_scene(textured_cubes(size=0.02), "three-quarter")
         radius = math.hypot(*scene["bounds_size"]) / 2
         frame = scene["camera_frame"]
+        fit = scene["camera_fit"]
+        half_vertical = math.radians(fit["fov"]) / 2
+        width, height = fit["viewport"]
+        half_horizontal = math.atan(math.tan(half_vertical) * width / height)
         self.assertAlmostEqual(
-            math.degrees(math.asin(radius / frame["distance"])), 22.5, places=3
+            frame["distance"],
+            radius / math.sin(min(half_vertical, half_horizontal)),
         )
         offset = [p - c for p, c in zip(scene["camera_position"], frame["center"])]
         self.assertAlmostEqual(math.atan2(offset[0], offset[2]), math.pi / 4, places=5)

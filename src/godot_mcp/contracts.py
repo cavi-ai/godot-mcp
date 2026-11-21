@@ -29,6 +29,7 @@ class Review(Result):
     source: str
     source_sha256: str
     view: View
+    lighting: Literal["studio", "clay", "sun"] | None = None
     state: Literal["prepared", "captured"]
     camera_frame_evidence: Literal[True] | None = None
     all_views: Literal[True] | None = None

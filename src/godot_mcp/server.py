@@ -54,6 +54,7 @@ async def godot_review_prepare(
     pose: Pose | None = None,
     all_views: StrictBool = False,
     framing: Framing | None = None,
+    lighting: Literal["studio", "clay", "sun"] = "studio",
 ) -> Review:
     """Prepare a GLB review, optionally at a selected animation pose."""
     return await call(
@@ -65,6 +66,7 @@ async def godot_review_prepare(
         pose.model_dump() if pose is not None else None,
         all_views,
         framing.model_dump() if framing is not None else None,
+        lighting,
     )
 
 

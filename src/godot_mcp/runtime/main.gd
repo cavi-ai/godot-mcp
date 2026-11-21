@@ -49,6 +49,10 @@ func _ready():
  yaw = VIEW_YAW[view]
  var all_views = choice.get("all_views") == true
  var geometry_preview = choice.get("geometry_preview") == true
+ var lighting = choice.get("lighting", "studio")
+ if lighting != "studio" and lighting != "clay" and lighting != "sun":
+  push_error("Invalid review lighting")
+  return
  var require_pose = choice.get("pose") != null
  var require_framing = choice.get("framing") != null
  var source = await fetch("subject.glb")
@@ -140,6 +144,27 @@ void fragment() {
      var adjusted := material.duplicate() as BaseMaterial3D
      adjusted.vertex_color_use_as_albedo = true
      mesh.set_surface_override_material(surface, adjusted)
+ if lighting == "clay":
+  var clay_shader = Shader.new()
+  clay_shader.code = """shader_type spatial;
+render_mode specular_disabled;
+void fragment() {
+ vec3 face = cross(dFdx(VERTEX), dFdy(VERTEX));
+ float magnitude = length(face);
+ if (magnitude > 0.0) {
+  face /= magnitude;
+  NORMAL = dot(face, VIEW) < 0.0 ? -face : face;
+ } else {
+  NORMAL = VIEW;
+ }
+ ALBEDO = vec3(0.55);
+ ROUGHNESS = 1.0;
+}"""
+  var clay = ShaderMaterial.new()
+  clay.shader = clay_shader
+  for mesh in meshes:
+   for surface in range(mesh.mesh.get_surface_count()):
+    mesh.set_surface_override_material(surface, clay)
  var bounds: AABB
  var first = true
  for mesh in meshes:
@@ -172,6 +197,9 @@ void fragment() {
  add_child(key)
  key.rotation_degrees = Vector3(-45, -35, 0)
  key.light_energy = 1.4
+ if lighting == "sun":
+  key.shadow_enabled = true
+  key.directional_shadow_max_distance = distance * 4.0
  # A neutral grey sky lights the subject and gives metals something to reflect;
  # the visible background stays a flat colour.
  var sky_material = ProceduralSkyMaterial.new()
@@ -189,6 +217,8 @@ void fragment() {
  env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
  env.environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
  env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+ if lighting == "sun":
+  env.environment.ambient_light_energy = 0.25
  add_child(env)
  # The bar is the largest power of ten that fits along the bottom front edge of the bounds.
  var axis = Vector3.AXIS_X if bounds.size.x >= bounds.size.z else Vector3.AXIS_Z
@@ -207,6 +237,21 @@ void fragment() {
  ruler.mesh = bar
  add_child(ruler)
  ruler.position = (bar_start + bar_end) / 2
+ if lighting == "sun":
+  var span = bounds.size[bounds.size.max_axis_index()]
+  var ground_mesh = PlaneMesh.new()
+  ground_mesh.size = Vector2(span * 6.0, span * 6.0)
+  var ground = MeshInstance3D.new()
+  ground.name = "ground"
+  ground.mesh = ground_mesh
+  ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+  var ground_material = StandardMaterial3D.new()
+  ground_material.albedo_color = Color(0.45, 0.45, 0.45)
+  ground_material.roughness = 1.0
+  ground.material_override = ground_material
+  add_child(ground)
+  var footprint = bounds.get_center()
+  ground.position = Vector3(footprint.x, bounds.position.y, footprint.z)
  var surfaces = 0
  var textures = 0
  var materials = []
@@ -223,7 +268,7 @@ void fragment() {
  var metadata = {"mesh_nodes": meshes.size(), "material_surfaces": surfaces, "textured_surfaces": textures, "materials": materials,
   "bounds_origin": [bounds.position.x, bounds.position.y, bounds.position.z],
   "bounds_size": [bounds.size.x, bounds.size.y, bounds.size.z], "units": "metres",
-  "godot_version": Engine.get_version_info()}
+  "godot_version": Engine.get_version_info(), "lighting": lighting}
  if require_pose:
   metadata["pose"] = pose_metadata
  else:

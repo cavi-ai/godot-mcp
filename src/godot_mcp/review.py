@@ -355,7 +355,10 @@ def prepare(
     pose=None,
     all_views=False,
     framing=None,
+    lighting="studio",
 ):
+    if lighting not in ("studio", "clay", "sun"):
+        raise ValueError("Unsupported lighting")
     if framing is not None:
         if pose is not None:
             raise ValueError("Camera framing is only supported for static reviews")
@@ -386,6 +389,7 @@ def prepare(
         "source": source,
         "source_sha256": source_sha256,
         "view": view,
+        "lighting": lighting,
         **chosen,
     }
     receipt = {"version": 1, **owner, "state": "prepared"}
@@ -410,7 +414,7 @@ def provider_identity():
     }
 
 
-SELECTION = ("pose", "framing", "camera_frame_evidence", "all_views")
+SELECTION = ("pose", "framing", "camera_frame_evidence", "all_views", "lighting")
 OWNER = ("kind", "source", "source_sha256", "view")
 
 
@@ -443,6 +447,10 @@ def inspect(root, directory, include_status=True):
         not isinstance(receipt.get("source"), str)
         or not isinstance(receipt.get("source_sha256"), str)
         or receipt.get("view") not in ("front", "three-quarter", "side")
+        or (
+            "lighting" in receipt
+            and receipt["lighting"] not in ("studio", "clay", "sun")
+        )
         or receipt.get("state") not in ("prepared", "captured")
         or not isinstance(receipt.get("artifacts", {}), dict)
         or any(
@@ -898,6 +906,7 @@ def scene_selection(receipt, fallback):
         "framing": receipt.get("framing"),
         "all_views": receipt.get("all_views") is True,
         "geometry_preview": fallback,
+        "lighting": receipt.get("lighting", "studio"),
     }
 
 

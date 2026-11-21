@@ -60,8 +60,9 @@ class InspectionTests(unittest.TestCase):
             engine.write_bytes(b"engine")
             with (
                 patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
-                patch.object(
-                    review, "run_owned", side_effect=review.CleanupUnverified("unknown")
+                patch(
+                    "godot_mcp.engine.launch",
+                    side_effect=review.CleanupUnverified("unknown"),
                 ),
             ):
                 with self.assertRaises(review.CleanupUnverified):
@@ -94,8 +95,6 @@ class InspectionTests(unittest.TestCase):
         import json
 
         from cavi_mcp_core.contracts import OperationUnknown
-
-        from godot_mcp import review
 
         t = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
         b = {"position": [0, 0, 0], "size": [1, 1, 0]}
@@ -216,16 +215,16 @@ class InspectionTests(unittest.TestCase):
             engine.write_bytes(b"engine")
 
             def inspect(value, directory, change=None):
-                def run(command, timeout, dest, label):
-                    (dest / "godot.stdout").write_bytes(b"")
-                    (dest / "godot.stderr").write_bytes(b"")
-                    (Path(command[3]) / "report.json").write_text(json.dumps(value))
+                def run(godot, project, script, timeout, evidence):
+                    (evidence / "godot.stdout").write_bytes(b"")
+                    (evidence / "godot.stderr").write_bytes(b"")
+                    (Path(project) / "report.json").write_text(json.dumps(value))
                     if change:
-                        (Path(command[3]) / change).write_bytes(b"changed")
+                        (Path(project) / change).write_bytes(b"changed")
 
                 with (
                     patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
-                    patch.object(review, "run_owned", side_effect=run),
+                    patch("godot_mcp.engine.launch", side_effect=run),
                 ):
                     return inspection.inspect_asset(root, "asset.glb", directory)
 
@@ -374,9 +373,8 @@ class InspectionTests(unittest.TestCase):
             engine.write_bytes(b"engine")
             with (
                 patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
-                patch.object(
-                    review,
-                    "run_owned",
+                patch(
+                    "godot_mcp.engine.launch",
                     side_effect=review.CleanupUnverified("uncertain"),
                 ),
                 patch.object(shutil, "rmtree", side_effect=OSError("cleanup failed")),

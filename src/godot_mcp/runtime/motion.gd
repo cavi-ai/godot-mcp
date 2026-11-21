@@ -79,6 +79,8 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
     var step = clip.length / (frames - 1)
     var linear = {"value": 0.0, "path": null, "bone": null}
     var angular = {"value": 0.0, "path": null, "bone": null}
+    var linear_proof = null
+    var angular_proof = null
     var first = []
     var previous = []
     var state = []
@@ -92,9 +94,11 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
                 var speed = (state[1][i] - previous[1][i]).length() / step
                 if speed > linear.value:
                     linear = {"value": speed, "path": targets[i].path, "bone": targets[i].bone}
+                    linear_proof = {"from": vec(previous[1][i]), "to": vec(state[1][i]), "step": step}
                 var spin = turn(previous[0][i], state[0][i]) / step
                 if spin > angular.value:
                     angular = {"value": spin, "path": targets[i].path, "bone": targets[i].bone}
+                    angular_proof = {"from": matrix(previous[0][i]), "to": matrix(state[0][i]), "step": step}
         previous = state
     clip.loop_mode = loop_mode
     var seam = {"position": 0.0, "rotation": 0.0}
@@ -109,7 +113,7 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
             is_root = bones[i - objects.size()].parent == -1
         if is_root:
             root_motion.append({"path": targets[i].path, "bone": targets[i].bone, "displacement": vec(state[1][i] - first[1][i])})
-    return {"frame_rate": FRAME_RATE, "frames": frames, "seconds_per_frame": step, "loop_seam": seam, "max_linear_speed": linear, "max_angular_speed": angular, "root_motion": root_motion}
+    return {"frame_rate": FRAME_RATE, "frames": frames, "seconds_per_frame": step, "loop_seam": seam, "max_linear_speed": linear, "max_angular_speed": angular, "root_motion": root_motion, "linear_proof": linear_proof, "angular_proof": angular_proof}
 
 func _initialize() -> void:
     call_deferred("run")

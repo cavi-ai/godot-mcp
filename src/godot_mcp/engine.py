@@ -10,6 +10,22 @@ from cavi_mcp_core.contracts import OperationUnknown
 from . import config, review
 
 
+def launch(godot, project, script, timeout, evidence):
+    review.run_owned(
+        [
+            str(godot),
+            "--headless",
+            "--path",
+            str(project),
+            "--script",
+            "res://" + script,
+        ],
+        timeout,
+        evidence,
+        "godot",
+    )
+
+
 def run(
     src,
     dest,
@@ -49,6 +65,8 @@ def run(
         (project / "project.godot").write_text(f'[application]\nconfig/name="{name}"\n')
         shutil.copyfile(src, project / "subject.glb")
         shutil.copyfile(runtime, project / script)
+        if script == "motion.gd":
+            shutil.copyfile(runtime.with_name("pose.gd"), project / "pose.gd")
         if settings is not None:
             review.atomic_json(project / "config.json", settings)
 
@@ -59,6 +77,11 @@ def run(
                 and review.digest(project / script)
                 == snapshot["provider"]["runtime"][script]
                 and (
+                    script != "motion.gd"
+                    or review.digest(project / "pose.gd")
+                    == snapshot["provider"]["runtime"]["pose.gd"]
+                )
+                and (
                     settings is None
                     or files.load_json(project / "config.json") == settings
                 )
@@ -66,19 +89,7 @@ def run(
 
         if not copies_unchanged():
             raise ValueError("Engine inputs changed while copying")
-        review.run_owned(
-            [
-                str(godot),
-                "--headless",
-                "--path",
-                str(project),
-                "--script",
-                "res://" + script,
-            ],
-            120,
-            dest,
-            "godot",
-        )
+        launch(godot, project, script, 120, dest)
         if (
             b"ERROR:" in (dest / "godot.stderr").read_bytes()
             or b"ERROR:" in (dest / "godot.stdout").read_bytes()

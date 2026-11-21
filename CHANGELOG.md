@@ -8,6 +8,7 @@
 - Inspection reports `qa` metrics for the whole scene: triangles, vertices, zero-area triangles, UV0 outside 0–1, materials, textures and their RGBA8 size, non-power-of-two textures, bone weights, blend shapes, mirrored and non-uniformly scaled meshes, animation keys and rest-pose bounds; surfaces and clips record their zero-area triangles, UV0 range and keys.
 - `godot_asset_inspect` takes a `budget` of upper limits on those metrics, draw calls, bones and the base offset from the scene origin, and records each check in the result and receipt.
 - Motion reports `qa` from 30 fps sampling of the whole clip: the loop seam between the first and last frame, the fastest node or bone movement and rotation, and root motion of top-level nodes and root bones.
+- Inspection records each BaseMaterial3D's albedo, metallic, roughness, emission, emission energy, normal scale, transparency, cull and shading, each clip's loop mode and track-type counts, vertices whose skin weights are all zero or do not sum to 1, and the KHR_materials_* extensions Godot 4.7 does not map onto the imported material.
 - `godot_review_prepare` takes `lighting`: `studio` (the default grey sky and key), `clay` (neutral shading that shows face normals), or `sun` (a directional light with a shadow on a ground plane that does not change the camera frame). Captured scene metadata records `lighting`.
 
 ### Changed

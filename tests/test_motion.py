@@ -20,6 +20,8 @@ QA = {
     "max_linear_speed": STILL,
     "max_angular_speed": STILL,
     "root_motion": [],
+    "linear_proof": None,
+    "angular_proof": None,
 }
 
 
@@ -41,11 +43,19 @@ class MotionRequestTests(unittest.TestCase):
 
     def test_report_rejects_bad_time_shape_and_identity(self):
         t = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
+        arrived = {"origin": [1, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
         sample = {
             "normalized_time": 0,
             "seconds": 0,
             "nodes": [{"local_transform": t, "world_transform": t}],
             "bones": [],
+        }
+        step = 1 / 30
+        moving_qa = {
+            **QA,
+            "max_linear_speed": {"value": 1.0, "path": "/n", "bone": None},
+            "linear_proof": {"from": [0, 0, 0], "to": [step, 0, 0], "step": step},
+            "root_motion": [{"path": "/n", "bone": None, "displacement": [1, 0, 0]}],
         }
         report = {
             "status": "ok",
@@ -58,22 +68,51 @@ class MotionRequestTests(unittest.TestCase):
             "bone_space": "skeleton relative and Godot world",
             "nodes": [{"path": "/n", "type": "Node3D"}],
             "bones": [],
-            "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
-            "qa": {
-                **QA,
-                "max_linear_speed": {"value": 1.0, "path": "/n", "bone": None},
-                "root_motion": [
-                    {"path": "/n", "bone": None, "displacement": [1, 0, 0]}
-                ],
-            },
+            "samples": [
+                sample,
+                {
+                    **sample,
+                    "normalized_time": 1,
+                    "seconds": 1,
+                    "nodes": [{"local_transform": t, "world_transform": arrived}],
+                },
+            ],
+            "qa": moving_qa,
         }
         motion.validate_report(report, "/p", "walk", [0, 1])
-        moving = report["qa"]["max_linear_speed"]
+        self.assertEqual(set(report["qa"]), set(QA) - {"linear_proof", "angular_proof"})
+        moving = moving_qa["max_linear_speed"]
         for bad in (
             {**report, "qa": {**QA, "frames": 1}},
             {**report, "qa": {**QA, "seconds_per_frame": 0.5}},
-            {**report, "qa": {**QA, "max_linear_speed": {**moving, "path": "/x"}}},
-            {**report, "qa": {**QA, "max_linear_speed": {**moving, "path": None}}},
+            {
+                **report,
+                "qa": {**moving_qa, "max_linear_speed": {**moving, "path": "/x"}},
+            },
+            {
+                **report,
+                "qa": {**moving_qa, "max_linear_speed": {**moving, "path": None}},
+            },
+            {
+                **report,
+                "qa": {
+                    **moving_qa,
+                    "linear_proof": {
+                        "from": [0, 0, 0],
+                        "to": [0, 0, 0],
+                        "step": step,
+                    },
+                },
+            },
+            {
+                **report,
+                "qa": {
+                    **moving_qa,
+                    "root_motion": [
+                        {"path": "/n", "bone": None, "displacement": [0, 0, 0]}
+                    ],
+                },
+            },
             {
                 **report,
                 "qa": {
@@ -151,6 +190,18 @@ class MotionRequestTests(unittest.TestCase):
             "qa": {
                 **QA,
                 "max_angular_speed": {"value": 2.0, "path": "/s", "bone": "root"},
+                "angular_proof": {
+                    "from": t,
+                    "to": {
+                        "origin": [0, 0, 0],
+                        "basis": [
+                            [math.cos(1 / 15), 0, -math.sin(1 / 15)],
+                            [0, 1, 0],
+                            [math.sin(1 / 15), 0, math.cos(1 / 15)],
+                        ],
+                    },
+                    "step": 1 / 30,
+                },
             },
         }
         motion.validate_report(report, "/p", "walk", [0, 1])
@@ -171,7 +222,7 @@ class MotionRequestTests(unittest.TestCase):
             (root / "clips.glb").write_bytes(animated([("clip", 1.0), ("pose", 0.0)]))
             with (
                 patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
-                patch.object(review, "run_owned", side_effect=AssertionError("ran")),
+                patch("godot_mcp.engine.launch", side_effect=AssertionError("ran")),
             ):
                 for directory, source, animation in (
                     ("static", "static.glb", "clip"),
@@ -202,9 +253,8 @@ class MotionRequestTests(unittest.TestCase):
                         root, "../outside.glb", "out", "/p", "clip", [0, 1]
                     )
                 with (
-                    patch.object(
-                        review,
-                        "run_owned",
+                    patch(
+                        "godot_mcp.engine.launch",
                         side_effect=review.CleanupUnverified("unknown"),
                     ),
                     self.assertRaises(review.CleanupUnverified),
@@ -225,7 +275,12 @@ class MotionRequestTests(unittest.TestCase):
             asset.write_bytes(animated([("clip", 1.0)]))
             engine.write_bytes(b"engine")
             runtime = Path(motion.__file__).parent / "runtime/motion.gd"
-            identity = {"runtime": {"motion.gd": review.digest(runtime)}}
+            identity = {
+                "runtime": {
+                    "motion.gd": review.digest(runtime),
+                    "pose.gd": review.digest(runtime.parent / "pose.gd"),
+                }
+            }
             t = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
             sample = {
                 "normalized_time": 0,
@@ -248,16 +303,16 @@ class MotionRequestTests(unittest.TestCase):
                 "qa": QA,
             }
 
-            def run(command, timeout, dest, name):
-                (dest / "godot.stdout").write_bytes(b"")
-                (dest / "godot.stderr").write_bytes(b"")
-                (Path(command[3]) / "report.json").write_text(json.dumps(report))
+            def run(godot, project, script, timeout, evidence):
+                (evidence / "godot.stdout").write_bytes(b"")
+                (evidence / "godot.stderr").write_bytes(b"")
+                (Path(project) / "report.json").write_text(json.dumps(report))
                 asset.write_bytes(b"changed")
 
             with (
                 patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
                 patch.object(review, "provider_identity", return_value=identity),
-                patch.object(review, "run_owned", side_effect=run),
+                patch("godot_mcp.engine.launch", side_effect=run),
                 self.assertRaises(OperationUnknown),
             ):
                 motion.inspect_motion(root, "asset.glb", "out", "/p", "clip", [0, 1])

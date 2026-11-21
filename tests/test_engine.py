@@ -37,8 +37,20 @@ class EngineTests(unittest.TestCase):
                 {
                     "duration": 1.0,
                     "keys": 31,
+                    "loop_mode": 0,
                     "name": "Slide",
                     "player": "/subject/AnimationPlayer",
+                    "track_types": {
+                        "animation": 0,
+                        "audio": 0,
+                        "bezier": 0,
+                        "blend_shape": 0,
+                        "method": 0,
+                        "position": 1,
+                        "rotation": 0,
+                        "scale": 0,
+                        "value": 0,
+                    },
                     "tracks": 1,
                 }
             ],
@@ -84,6 +96,8 @@ class EngineTests(unittest.TestCase):
                 "max_texture_size": 2,
                 "npot_textures": 0,
                 "max_bone_influences": 0,
+                "zero_weight_vertices": 0,
+                "unnormalized_weight_vertices": 0,
                 "max_blend_shapes": 0,
                 "mirrored_meshes": 1,
                 "non_uniform_scale_meshes": 1,
@@ -201,7 +215,7 @@ class EngineTests(unittest.TestCase):
         project = self.root / "review"
         project.mkdir()
         runtime = Path(review.__file__).parent / "runtime"
-        for name in ("project.godot", "main.tscn", "main.gd"):
+        for name in ("project.godot", "main.tscn", "main.gd", "pose.gd"):
             shutil.copyfile(runtime / name, project / name)
         (project / "subject.glb").write_bytes(source)
         receipt = {"view": view, **({} if pose is None else {"pose": pose})}
@@ -225,8 +239,13 @@ class EngineTests(unittest.TestCase):
         scene = self.review_scene(textured_cubes(size=0.02), "three-quarter")
         radius = math.hypot(*scene["bounds_size"]) / 2
         frame = scene["camera_frame"]
+        fit = scene["camera_fit"]
+        half_vertical = math.radians(fit["fov"]) / 2
+        width, height = fit["viewport"]
+        half_horizontal = math.atan(math.tan(half_vertical) * width / height)
         self.assertAlmostEqual(
-            math.degrees(math.asin(radius / frame["distance"])), 22.5, places=3
+            frame["distance"],
+            radius / math.sin(min(half_vertical, half_horizontal)),
         )
         offset = [p - c for p, c in zip(scene["camera_position"], frame["center"])]
         self.assertAlmostEqual(math.atan2(offset[0], offset[2]), math.pi / 4, places=5)

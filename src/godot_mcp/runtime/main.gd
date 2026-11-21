@@ -3,6 +3,7 @@ const SELECTION_FILE = "selection.json"
 const VIEW_YAW = {"front": 0.0, "three-quarter": PI / 4, "side": PI / 2}
 const PITCH = 0.3
 const FOV = 45.0
+const Pose = preload("res://pose.gd")
 var view := "three-quarter"
 var camera: Camera3D
 var center: Vector3
@@ -21,6 +22,7 @@ var pose_slider: HSlider
 var pose_time_label: Label
 var playback_elapsed := 0.0
 var view_callback
+var camera_fit = null
 
 # The exported runtime is shared by every review: each bundle serves its own subject
 # and selection next to it, and headless runs read them from the project.
@@ -80,8 +82,10 @@ func _ready():
    push_error("Pose time outside clip")
    return
   selected_player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
-  selected_player.play(selected.animation)
-  selected_player.seek(float(selected.time_seconds), true, true)
+  var pose_nodes = []
+  var pose_bones = []
+  collect_baselines(model, pose_nodes, pose_bones)
+  Pose.apply_pose(selected_player, selected.animation, float(selected.time_seconds), pose_nodes, pose_bones)
   selected_player.pause()
   pose_player = selected_player
   pose_player_path = str(selected.player)
@@ -166,7 +170,7 @@ void fragment() {
  for mesh in meshes:
   var local = mesh.get_aabb()
   if require_pose and mesh.skin != null:
-   local = posed_aabb(mesh)
+   local = Pose.posed_aabb(mesh)
   var b = mesh.global_transform * local
   bounds = b if first else bounds.merge(b)
   first = false
@@ -182,6 +186,7 @@ void fragment() {
    return
   center = Vector3(frame.center[0], frame.center[1], frame.center[2])
   distance = float(frame.distance)
+  camera_fit = null
  initial_distance = distance
  camera = Camera3D.new()
  add_child(camera)
@@ -269,6 +274,8 @@ void fragment() {
  else:
   metadata["camera_frame"] = {"center": vector(center), "distance": camera.global_position.distance_to(center)}
   metadata["geometry_preview_surfaces"] = geometry_preview_surfaces
+ if camera_fit != null:
+  metadata["camera_fit"] = camera_fit
  metadata["renderer"] = {"method": RenderingServer.get_current_rendering_method(),
   "driver": RenderingServer.get_current_rendering_driver_name(), "adapter": RenderingServer.get_video_adapter_name()}
  metadata["camera_position"] = vector(camera.global_position)
@@ -296,6 +303,7 @@ void fragment() {
 func fit_distance(radius: float) -> float:
  # The bounding sphere touches the narrower of the vertical and horizontal fields of view.
  var size = get_viewport().get_visible_rect().size
+ camera_fit = {"fov": FOV, "viewport": [size.x, size.y], "radius": radius}
  var half_vertical = deg_to_rad(FOV) / 2
  var half_horizontal = atan(tan(half_vertical) * size.x / size.y)
  return radius / sin(min(half_vertical, half_horizontal))
@@ -397,6 +405,15 @@ func find_player(node: Node, parent_path: String, wanted: String) -> AnimationPl
 func vector(v: Vector3) -> Array:
  return [v.x, v.y, v.z]
 
+func collect_baselines(node: Node, nodes: Array, bones: Array) -> void:
+ if node is Node3D:
+  nodes.append({"node": node, "baseline": node.transform})
+ if node is Skeleton3D:
+  for i in node.get_bone_count():
+   bones.append({"node": node, "index": i, "baseline": node.get_bone_pose(i)})
+ for child in node.get_children():
+  collect_baselines(child, nodes, bones)
+
 func collect_pose(node: Node, parent_path: String, bones: Array) -> bool:
  var path = parent_path + "/" + str(node.name)
  if node is Skeleton3D:
@@ -411,36 +428,6 @@ func collect_pose(node: Node, parent_path: String, bones: Array) -> bool:
   if not collect_pose(child, path, bones):
    return false
  return true
-
-func posed_aabb(mesh: MeshInstance3D) -> AABB:
- # The engine's skinning on the CPU; bake_mesh_from_current_skeleton_pose reads a rendering
- # server skeleton, which headless runs do not have.
- var skeleton := mesh.get_node(mesh.skeleton) as Skeleton3D
- var binds: Array[Transform3D] = []
- for i in mesh.skin.get_bind_count():
-  var bone = mesh.skin.get_bind_bone(i)
-  if mesh.skin.get_bind_name(i) != &"":
-   bone = skeleton.find_bone(mesh.skin.get_bind_name(i))
-  binds.append(skeleton.get_bone_global_pose(bone) * mesh.skin.get_bind_pose(i))
- var box: AABB
- var first = true
- for surface in mesh.mesh.get_surface_count():
-  var arrays = mesh.mesh.surface_get_arrays(surface)
-  var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-  var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
-  var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
-  var influences = bones.size() / vertices.size() if not vertices.is_empty() else 0
-  for v in vertices.size():
-   var point = vertices[v]
-   if influences > 0:
-    point = Vector3.ZERO
-    for k in influences:
-     var weight = weights[v * influences + k]
-     if weight > 0.0:
-      point += binds[bones[v * influences + k]] * vertices[v] * weight
-   box = AABB(point, Vector3.ZERO) if first else box.expand(point)
-   first = false
- return box
 
 func collect_meshes(node: Node, meshes: Array[MeshInstance3D]):
  if node is MeshInstance3D and node.mesh:

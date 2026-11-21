@@ -3,6 +3,7 @@
 import hashlib
 import http.server
 import json
+import math
 import os
 import re
 import shutil
@@ -18,12 +19,13 @@ from datetime import UTC, datetime
 from functools import partial
 from importlib.metadata import version as package_version
 from pathlib import Path
+from typing import Annotated
 
 from cavi_mcp_core import files, journal, owned_exec, processes, workspace
 from cavi_mcp_core.contracts import OperationUnknown
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import config
-from .framing import Framing, validate_frame
 from .pose import Pose, validate_scene
 from .shapes import number, vector
 
@@ -31,6 +33,28 @@ LIMIT = 64 * 1024 * 1024
 ARTIFACT_LIMIT = 256 * 1024 * 1024
 PLAIN_CLIP = re.compile(r"[A-Za-z0-9 _-]+")
 CLIP_TOLERANCE = 1e-4
+
+Finite = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+
+
+class Framing(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    center: Annotated[list[Finite], Field(min_length=3, max_length=3)]
+    distance: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
+
+
+def validate_frame(observed, requested=None):
+    frame = Framing.model_validate(observed).model_dump()
+    if requested is not None:
+        expected = Framing.model_validate(requested).model_dump()
+        actual_values = [*frame["center"], frame["distance"]]
+        expected_values = [*expected["center"], expected["distance"]]
+        if any(
+            not math.isclose(a, b, rel_tol=1e-5, abs_tol=1e-5)
+            for a, b in zip(actual_values, expected_values, strict=True)
+        ):
+            raise ValueError("Rendered camera frame differs from requested framing")
+    return frame
 
 
 class CleanupUnverified(OperationUnknown):
@@ -493,7 +517,7 @@ def inspect(root, directory, include_status=True):
         scene = files.load_json(metadata)
         if not isinstance(scene, dict) or scene != receipt.get("scene"):
             raise ValueError("Captured pose metadata changed")
-        validate_pose_scene(receipt["pose"], scene.get("pose"))
+        validate_scene(receipt["pose"], scene.get("pose"))
         if (
             not isinstance(scene.get("godot_version"), dict)
             or type(scene["godot_version"].get("major")) is not int
@@ -869,7 +893,7 @@ def run_with_browser(command, profile, task, evidence):
         raise execution_error
 
 
-RUNTIME_FILES = ("project.godot", "main.tscn", "main.gd")
+RUNTIME_FILES = ("project.godot", "main.tscn", "main.gd", "pose.gd")
 SELECTION_FILE = "selection.json"
 MANIFEST = "manifest.json"
 
@@ -1020,9 +1044,6 @@ def capture(root, directory):
         os.close(fd)
 
 
-validate_pose_scene = validate_scene
-
-
 def capture_locked(root, directory):
     receipt = inspect(root, directory, include_status=False)
     dest = inside(root, directory)
@@ -1124,7 +1145,7 @@ def capture_locked(root, directory):
         if not isinstance(scene, dict):
             raise ValueError("Invalid captured scene metadata")  # noqa: TRY004
         if "pose" in receipt:
-            validate_pose_scene(receipt["pose"], scene.get("pose"))
+            validate_scene(receipt["pose"], scene.get("pose"))
             if (
                 not isinstance(scene.get("godot_version"), dict)
                 or type(scene["godot_version"].get("major")) is not int

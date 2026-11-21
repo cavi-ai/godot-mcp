@@ -113,6 +113,15 @@ class InspectionTests(unittest.TestCase):
                 "name": "",
                 "type": "StandardMaterial3D",
                 "textures": {"base_color": {"name": "", "width": 1, "height": 1}},
+                "albedo": [1, 1, 1, 1],
+                "metallic": 0,
+                "roughness": 1,
+                "emission": [0, 0, 0, 1],
+                "emission_energy": 1,
+                "normal_scale": 1,
+                "transparency": 0,
+                "cull": 0,
+                "shading": 0,
             },
         }
         report = {
@@ -138,6 +147,8 @@ class InspectionTests(unittest.TestCase):
                 "max_texture_size": 1,
                 "npot_textures": 0,
                 "max_bone_influences": 0,
+                "zero_weight_vertices": 0,
+                "unnormalized_weight_vertices": 0,
                 "max_blend_shapes": 0,
                 "mirrored_meshes": 0,
                 "non_uniform_scale_meshes": 0,
@@ -182,8 +193,21 @@ class InspectionTests(unittest.TestCase):
                     "duration": 1.0,
                     "tracks": 1,
                     "keys": 2,
+                    "loop_mode": 0,
+                    "track_types": {
+                        "value": 0,
+                        "position": 1,
+                        "rotation": 0,
+                        "scale": 0,
+                        "blend_shape": 0,
+                        "method": 0,
+                        "bezier": 0,
+                        "audio": 0,
+                        "animation": 0,
+                    },
                 }
             ],
+            "dropped_material_extensions": [],
         }
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -248,6 +272,95 @@ class InspectionTests(unittest.TestCase):
                 with self.subTest(index=index), self.assertRaises(OperationUnknown):
                     inspect(bad, directory)
                 self.assertFalse((root / directory / "receipt.json").exists())
+
+    def test_unmapped_material_extensions_are_listed(self):
+        import json
+
+        from godot_mcp import review
+
+        report = {
+            "status": "ok",
+            "godot_version": {"major": 4},
+            "units": "metres",
+            "bounds_semantics": "imported rest pose",
+            "totals": {
+                "nodes": 0,
+                "surfaces": 0,
+                "bones": 0,
+                "clips": 0,
+                "unsupported_primitives": 0,
+            },
+            "qa": {
+                "triangles": 0,
+                "vertices": 0,
+                "degenerate_triangles": 0,
+                "uv0_outside_unit_surfaces": 0,
+                "materials": 0,
+                "textures": 0,
+                "texture_rgba8_bytes": 0,
+                "max_texture_size": 0,
+                "npot_textures": 0,
+                "max_bone_influences": 0,
+                "zero_weight_vertices": 0,
+                "unnormalized_weight_vertices": 0,
+                "max_blend_shapes": 0,
+                "mirrored_meshes": 0,
+                "non_uniform_scale_meshes": 0,
+                "animation_keys": 0,
+                "bounds": None,
+            },
+            "truncated": {
+                "nodes": False,
+                "surfaces": False,
+                "bones": False,
+                "clips": False,
+            },
+            "nodes": [],
+            "surfaces": [],
+            "bones": [],
+            "clips": [],
+        }
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "asset.glb").write_bytes(
+                glb(
+                    {
+                        "extensionsUsed": [
+                            "KHR_materials_clearcoat",
+                            "KHR_materials_unlit",
+                        ],
+                        "materials": [
+                            {
+                                "extensions": {
+                                    "KHR_materials_clearcoat": {},
+                                    "KHR_materials_unlit": {},
+                                }
+                            }
+                        ],
+                    }
+                )
+            )
+            engine = root / "engine"
+            engine.write_bytes(b"engine")
+
+            def run(command, timeout, dest, label):
+                (dest / "godot.stdout").write_bytes(b"")
+                (dest / "godot.stderr").write_bytes(b"")
+                (Path(command[3]) / "report.json").write_text(json.dumps(report))
+
+            with (
+                patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
+                patch.object(review, "run_owned", side_effect=run),
+            ):
+                result = inspection.inspect_asset(root, "asset.glb", "extensions")
+            self.assertEqual(
+                result["report"]["dropped_material_extensions"],
+                ["KHR_materials_clearcoat"],
+            )
+            saved = json.loads((root / "extensions" / "report.json").read_text())
+            self.assertEqual(
+                saved["dropped_material_extensions"], ["KHR_materials_clearcoat"]
+            )
 
     def test_unknown_cleanup_preserves_project_and_input_receipt(self):
         import shutil

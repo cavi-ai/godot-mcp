@@ -14,7 +14,8 @@ class Budget(BaseModel):
     ``draw_calls`` limits surfaces and ``bones`` limits skeleton bones;
     ``base_offset`` limits the distance in metres from the scene origin to the
     bottom centre of the rest-pose bounds. The others limit the report's `qa`
-    metric of the same name.
+    metric of the same name, including ``zero_weight_vertices`` and
+    ``unnormalized_weight_vertices``.
     """
 
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -30,6 +31,8 @@ class Budget(BaseModel):
     uv0_outside_unit_surfaces: Limit | None = None
     bones: Limit | None = None
     max_bone_influences: Limit | None = None
+    zero_weight_vertices: Limit | None = None
+    unnormalized_weight_vertices: Limit | None = None
     max_blend_shapes: Limit | None = None
     mirrored_meshes: Limit | None = None
     non_uniform_scale_meshes: Limit | None = None

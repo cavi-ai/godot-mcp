@@ -201,7 +201,7 @@ class EngineTests(unittest.TestCase):
         project = self.root / "review"
         project.mkdir()
         runtime = Path(review.__file__).parent / "runtime"
-        for name in ("project.godot", "main.tscn", "main.gd"):
+        for name in ("project.godot", "main.tscn", "main.gd", "pose.gd"):
             shutil.copyfile(runtime / name, project / name)
         (project / "subject.glb").write_bytes(source)
         receipt = {"view": view, **({} if pose is None else {"pose": pose})}

@@ -65,6 +65,8 @@ def run(
         (project / "project.godot").write_text(f'[application]\nconfig/name="{name}"\n')
         shutil.copyfile(src, project / "subject.glb")
         shutil.copyfile(runtime, project / script)
+        if script == "motion.gd":
+            shutil.copyfile(runtime.with_name("pose.gd"), project / "pose.gd")
         if settings is not None:
             review.atomic_json(project / "config.json", settings)
 
@@ -74,6 +76,11 @@ def run(
                 == snapshot["source_sha256"]
                 and review.digest(project / script)
                 == snapshot["provider"]["runtime"][script]
+                and (
+                    script != "motion.gd"
+                    or review.digest(project / "pose.gd")
+                    == snapshot["provider"]["runtime"]["pose.gd"]
+                )
                 and (
                     settings is None
                     or files.load_json(project / "config.json") == settings

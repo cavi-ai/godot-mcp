@@ -509,7 +509,7 @@ def inspect(root, directory, include_status=True):
         scene = files.load_json(metadata)
         if not isinstance(scene, dict) or scene != receipt.get("scene"):
             raise ValueError("Captured pose metadata changed")
-        validate_pose_scene(receipt["pose"], scene.get("pose"))
+        validate_scene(receipt["pose"], scene.get("pose"))
         if (
             not isinstance(scene.get("godot_version"), dict)
             or type(scene["godot_version"].get("major")) is not int
@@ -885,7 +885,7 @@ def run_with_browser(command, profile, task, evidence):
         raise execution_error
 
 
-RUNTIME_FILES = ("project.godot", "main.tscn", "main.gd")
+RUNTIME_FILES = ("project.godot", "main.tscn", "main.gd", "pose.gd")
 SELECTION_FILE = "selection.json"
 MANIFEST = "manifest.json"
 
@@ -1035,9 +1035,6 @@ def capture(root, directory):
         os.close(fd)
 
 
-validate_pose_scene = validate_scene
-
-
 def capture_locked(root, directory):
     receipt = inspect(root, directory, include_status=False)
     dest = inside(root, directory)
@@ -1139,7 +1136,7 @@ def capture_locked(root, directory):
         if not isinstance(scene, dict):
             raise ValueError("Invalid captured scene metadata")  # noqa: TRY004
         if "pose" in receipt:
-            validate_pose_scene(receipt["pose"], scene.get("pose"))
+            validate_scene(receipt["pose"], scene.get("pose"))
             if (
                 not isinstance(scene.get("godot_version"), dict)
                 or type(scene["godot_version"].get("major")) is not int

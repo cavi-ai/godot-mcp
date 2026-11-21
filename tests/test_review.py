@@ -1238,8 +1238,10 @@ class ReviewLightingSceneTests(unittest.TestCase):
         for lighting in ("studio", "clay", "sun"):
             project = root / lighting
             project.mkdir()
-            for name in ("project.godot", "main.tscn", "main.gd"):
-                shutil.copyfile(runtime / name, project / name)
+            for name in ("project.godot", "main.tscn", "main.gd", "pose.gd"):
+                runtime_file = runtime / name
+                if runtime_file.is_file():
+                    shutil.copyfile(runtime_file, project / name)
             (project / "subject.glb").write_bytes(source)
             receipt = {"view": "three-quarter", "lighting": lighting}
             (project / review.SELECTION_FILE).write_text(

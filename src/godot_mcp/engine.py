@@ -10,6 +10,22 @@ from cavi_mcp_core.contracts import OperationUnknown
 from . import config, review
 
 
+def launch(godot, project, script, timeout, evidence):
+    review.run_owned(
+        [
+            str(godot),
+            "--headless",
+            "--path",
+            str(project),
+            "--script",
+            "res://" + script,
+        ],
+        timeout,
+        evidence,
+        "godot",
+    )
+
+
 def run(
     src,
     dest,
@@ -66,19 +82,7 @@ def run(
 
         if not copies_unchanged():
             raise ValueError("Engine inputs changed while copying")
-        review.run_owned(
-            [
-                str(godot),
-                "--headless",
-                "--path",
-                str(project),
-                "--script",
-                "res://" + script,
-            ],
-            120,
-            dest,
-            "godot",
-        )
+        launch(godot, project, script, 120, dest)
         if (
             b"ERROR:" in (dest / "godot.stderr").read_bytes()
             or b"ERROR:" in (dest / "godot.stdout").read_bytes()

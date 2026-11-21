@@ -2,6 +2,7 @@ extends SceneTree
 
 const FRAME_RATE = 30
 const MAX_FRAMES = 1801
+const Pose = preload("res://pose.gd")
 var objects: Array = []
 var skeletons: Array = []
 var bones: Array = []
@@ -42,13 +43,7 @@ func fail(message: String) -> void:
     quit(1)
 
 func pose_at(animation: String, seconds: float) -> void:
-    player_node.stop()
-    for item in objects:
-        item.node.transform = item.baseline
-    for item in bones:
-        item.node.set_bone_pose(item.index, item.baseline)
-    player_node.play(animation)
-    player_node.seek(seconds, true, true)
+    Pose.apply_pose(player_node, animation, seconds, objects, bones)
     for skeleton in skeletons:
         skeleton.force_update_all_bone_transforms()
 

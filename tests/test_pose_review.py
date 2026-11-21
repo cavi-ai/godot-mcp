@@ -100,7 +100,7 @@ class PoseReviewTests(unittest.TestCase):
                 }
             ],
         }
-        review.validate_pose_scene(self.pose, metadata)
+        review.validate_scene(self.pose, metadata)
         for bad in (
             {**metadata, "animation": "Other"},
             {**metadata, "time_seconds": 1.5},
@@ -112,7 +112,7 @@ class PoseReviewTests(unittest.TestCase):
             {**metadata, "bones": [{"origin": [0, math.inf, 0]}]},
         ):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
-                review.validate_pose_scene(self.pose, bad)
+                review.validate_scene(self.pose, bad)
 
     def test_capture_seals_configuration_and_rejects_drift_or_wrong_pose(self):
         import json

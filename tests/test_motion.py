@@ -275,7 +275,12 @@ class MotionRequestTests(unittest.TestCase):
             asset.write_bytes(animated([("clip", 1.0)]))
             engine.write_bytes(b"engine")
             runtime = Path(motion.__file__).parent / "runtime/motion.gd"
-            identity = {"runtime": {"motion.gd": review.digest(runtime)}}
+            identity = {
+                "runtime": {
+                    "motion.gd": review.digest(runtime),
+                    "pose.gd": review.digest(runtime.parent / "pose.gd"),
+                }
+            }
             t = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
             sample = {
                 "normalized_time": 0,

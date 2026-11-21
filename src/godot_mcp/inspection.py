@@ -24,10 +24,31 @@ QA_COUNTS = (
     "max_texture_size",
     "npot_textures",
     "max_bone_influences",
+    "zero_weight_vertices",
+    "unnormalized_weight_vertices",
     "max_blend_shapes",
     "mirrored_meshes",
     "non_uniform_scale_meshes",
     "animation_keys",
+)
+TRACK_TYPES = (
+    "value",
+    "position",
+    "rotation",
+    "scale",
+    "blend_shape",
+    "method",
+    "bezier",
+    "audio",
+    "animation",
+)
+MATERIAL_TYPES = frozenset({"StandardMaterial3D", "ORMMaterial3D"})
+REPRESENTED_MATERIAL_EXTENSIONS = frozenset(
+    {
+        "KHR_materials_unlit",
+        "KHR_materials_emissive_strength",
+        "KHR_materials_pbrSpecularGlossiness",
+    }
 )
 
 
@@ -44,20 +65,82 @@ def bounds(value):
     )
 
 
+def rgba(value):
+    return (
+        isinstance(value, list)
+        and len(value) == 4
+        and all(number(item) for item in value)
+    )
+
+
 def material(value):
-    return value is None or (
+    if value is None:
+        return True
+    textures = value.get("textures") if isinstance(value, dict) else None
+    if not (
         isinstance(value, dict)
         and isinstance(value.get("name"), str)
         and isinstance(value.get("type"), str)
-        and isinstance(value.get("textures"), dict)
+        and isinstance(textures, dict)
         and all(
             isinstance(texture, dict)
             and isinstance(texture.get("name"), str)
             and count(texture.get("width"))
             and count(texture.get("height"))
-            for texture in value["textures"].values()
+            for texture in textures.values()
         )
+    ):
+        return False
+    if value["type"] not in MATERIAL_TYPES:
+        return True
+    return (
+        rgba(value.get("albedo"))
+        and rgba(value.get("emission"))
+        and all(
+            number(value.get(key))
+            for key in ("metallic", "roughness", "emission_energy", "normal_scale")
+        )
+        and type(value.get("transparency")) is int
+        and 0 <= value["transparency"] <= 4
+        and type(value.get("cull")) is int
+        and 0 <= value["cull"] <= 2
+        and type(value.get("shading")) is int
+        and 0 <= value["shading"] <= 2
     )
+
+
+def clip_tracks(types, tracks):
+    return (
+        isinstance(types, dict)
+        and set(types) == set(TRACK_TYPES)
+        and all(count(types[key]) for key in TRACK_TYPES)
+        and sum(types.values()) == tracks
+    )
+
+
+def _dropped_material_name(name):
+    return (
+        isinstance(name, str)
+        and name.startswith("KHR_materials_")
+        and name not in REPRESENTED_MATERIAL_EXTENSIONS
+    )
+
+
+def dropped_material_extensions(document):
+    """Sorted ``KHR_materials_*`` names Godot 4.7 does not map onto the material."""
+    found = set()
+    used = document.get("extensionsUsed")
+    if isinstance(used, list):
+        found.update(name for name in used if _dropped_material_name(name))
+    materials = document.get("materials")
+    if isinstance(materials, list):
+        for item in materials:
+            extensions = item.get("extensions") if isinstance(item, dict) else None
+            if isinstance(extensions, dict):
+                found.update(
+                    name for name in extensions if _dropped_material_name(name)
+                )
+    return sorted(found)
 
 
 def validate_report(report):
@@ -180,6 +263,9 @@ def validate_report(report):
         or c["duration"] < 0
         or not count(c.get("tracks"))
         or not count(c.get("keys"))
+        or type(c.get("loop_mode")) is not int
+        or not 0 <= c["loop_mode"] <= 2
+        or not clip_tracks(c.get("track_types"), c.get("tracks"))
         for c in clips
     ) or len({(c["player"], c["name"]) for c in clips}) != len(clips):
         raise ValueError("Inspection clip inventory is invalid")
@@ -194,7 +280,8 @@ class Budget(BaseModel):
     ``draw_calls`` limits surfaces and ``bones`` limits skeleton bones;
     ``base_offset`` limits the distance in metres from the scene origin to the
     bottom centre of the rest-pose bounds. The others limit the report's `qa`
-    metric of the same name.
+    metric of the same name, including ``zero_weight_vertices`` and
+    ``unnormalized_weight_vertices``.
     """
 
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -210,6 +297,8 @@ class Budget(BaseModel):
     uv0_outside_unit_surfaces: Limit | None = None
     bones: Limit | None = None
     max_bone_influences: Limit | None = None
+    zero_weight_vertices: Limit | None = None
+    unnormalized_weight_vertices: Limit | None = None
     max_blend_shapes: Limit | None = None
     mirrored_meshes: Limit | None = None
     non_uniform_scale_meshes: Limit | None = None
@@ -258,9 +347,15 @@ def inspect_asset(root, source, directory, limits=None):
     """Inspect ``source``; ``limits`` from a `Budget` are checked and recorded."""
     src = review.source_glb(root, source)
     dest = review.new_output(root, directory)
-    validate_glb(src)
+    document = validate_glb(src)
     if limits is not None:
         limits = Budget.model_validate(limits).model_dump(exclude_none=True)
+
+    def validate(report):
+        checked = validate_report(report)
+        checked["dropped_material_extensions"] = dropped_material_extensions(document)
+        return checked
+
     return engine.run(
         src,
         dest,
@@ -270,7 +365,7 @@ def inspect_asset(root, source, directory, limits=None):
         script="inspect.gd",
         settings=None,
         report_limit=REPORT_LIMIT,
-        validate=validate_report,
+        validate=validate,
         assess=None
         if limits is None
         else lambda report: {"budget": evaluate(limits, report)},

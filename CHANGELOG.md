@@ -9,6 +9,7 @@
 - `godot_asset_inspect` takes a `budget` of upper limits on those metrics, draw calls, bones and the base offset from the scene origin, and records each check in the result and receipt.
 - Motion reports `qa` from 30 fps sampling of the whole clip: the loop seam between the first and last frame, the fastest node or bone movement and rotation, and root motion of top-level nodes and root bones.
 - Motion samples each mesh's blend-shape weights and the CPU-skinned bounds of skinned meshes; the 30 fps scan reports the largest skinned-bounds size change from the rest pose and the largest blend-shape weight gap between the first and last frame.
+- Inspection records each BaseMaterial3D's albedo, metallic, roughness, emission, emission energy, normal scale, transparency, cull and shading, each clip's loop mode and track-type counts, vertices whose skin weights are all zero or do not sum to 1, and the KHR_materials_* extensions Godot 4.7 does not map onto the imported material.
 
 ### Changed
 

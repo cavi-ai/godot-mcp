@@ -222,7 +222,7 @@ class MotionRequestTests(unittest.TestCase):
             (root / "clips.glb").write_bytes(animated([("clip", 1.0), ("pose", 0.0)]))
             with (
                 patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
-                patch.object(review, "run_owned", side_effect=AssertionError("ran")),
+                patch("godot_mcp.engine.launch", side_effect=AssertionError("ran")),
             ):
                 for directory, source, animation in (
                     ("static", "static.glb", "clip"),
@@ -253,9 +253,8 @@ class MotionRequestTests(unittest.TestCase):
                         root, "../outside.glb", "out", "/p", "clip", [0, 1]
                     )
                 with (
-                    patch.object(
-                        review,
-                        "run_owned",
+                    patch(
+                        "godot_mcp.engine.launch",
                         side_effect=review.CleanupUnverified("unknown"),
                     ),
                     self.assertRaises(review.CleanupUnverified),
@@ -299,16 +298,16 @@ class MotionRequestTests(unittest.TestCase):
                 "qa": QA,
             }
 
-            def run(command, timeout, dest, name):
-                (dest / "godot.stdout").write_bytes(b"")
-                (dest / "godot.stderr").write_bytes(b"")
-                (Path(command[3]) / "report.json").write_text(json.dumps(report))
+            def run(godot, project, script, timeout, evidence):
+                (evidence / "godot.stdout").write_bytes(b"")
+                (evidence / "godot.stderr").write_bytes(b"")
+                (Path(project) / "report.json").write_text(json.dumps(report))
                 asset.write_bytes(b"changed")
 
             with (
                 patch.dict(os.environ, {"CAVI_GODOT_BIN": str(engine)}),
                 patch.object(review, "provider_identity", return_value=identity),
-                patch.object(review, "run_owned", side_effect=run),
+                patch("godot_mcp.engine.launch", side_effect=run),
                 self.assertRaises(OperationUnknown),
             ):
                 motion.inspect_motion(root, "asset.glb", "out", "/p", "clip", [0, 1])

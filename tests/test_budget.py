@@ -54,6 +54,8 @@ def report(bounds):
             "max_texture_size": 0,
             "npot_textures": 0,
             "max_bone_influences": 0,
+            "zero_weight_vertices": 0,
+            "unnormalized_weight_vertices": 0,
             "max_blend_shapes": 0,
             "mirrored_meshes": 0,
             "non_uniform_scale_meshes": 0,

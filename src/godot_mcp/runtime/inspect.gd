@@ -12,7 +12,7 @@ var surfaces: Array = []
 var bones: Array = []
 var clips: Array = []
 var totals = {"nodes": 0, "surfaces": 0, "bones": 0, "clips": 0, "unsupported_primitives": 0}
-var qa = {"triangles": 0, "vertices": 0, "degenerate_triangles": 0, "uv0_outside_unit_surfaces": 0, "materials": 0, "textures": 0, "texture_rgba8_bytes": 0, "max_texture_size": 0, "npot_textures": 0, "max_bone_influences": 0, "max_blend_shapes": 0, "mirrored_meshes": 0, "non_uniform_scale_meshes": 0, "animation_keys": 0, "bounds": null}
+var qa = {"triangles": 0, "vertices": 0, "degenerate_triangles": 0, "uv0_outside_unit_surfaces": 0, "materials": 0, "textures": 0, "texture_rgba8_bytes": 0, "max_texture_size": 0, "npot_textures": 0, "max_bone_influences": 0, "zero_weight_vertices": 0, "unnormalized_weight_vertices": 0, "max_blend_shapes": 0, "mirrored_meshes": 0, "non_uniform_scale_meshes": 0, "animation_keys": 0, "bounds": null}
 var seen = {}
 var scene_bounds = null
 
@@ -25,6 +25,9 @@ func transform(t: Transform3D) -> Dictionary:
 func bounds(a: AABB) -> Dictionary:
     return {"position": vec(a.position), "size": vec(a.size)}
 
+func color(c: Color) -> Array:
+    return [c.r, c.g, c.b, c.a]
+
 func material_info(material: Material) -> Variant:
     if material == null:
         return null
@@ -34,6 +37,15 @@ func material_info(material: Material) -> Variant:
             var texture = material.get_texture(slot[1])
             if texture != null:
                 result.textures[slot[0]] = {"name": texture.resource_name, "width": texture.get_width(), "height": texture.get_height()}
+        result["albedo"] = color(material.albedo_color)
+        result["metallic"] = material.metallic
+        result["roughness"] = material.roughness
+        result["emission"] = color(material.emission)
+        result["emission_energy"] = material.emission_energy_multiplier
+        result["normal_scale"] = material.normal_scale
+        result["transparency"] = int(material.transparency)
+        result["cull"] = int(material.cull_mode)
+        result["shading"] = int(material.shading_mode)
     return result
 
 func first_use(resource: Resource) -> bool:
@@ -85,6 +97,36 @@ func surface_quality(mesh: Mesh, index: int, primitive: int, format: int) -> Dic
         result.degenerate_triangles = degenerate
     return result
 
+func count_skin(mesh: Mesh, index: int, vertices: int) -> void:
+    if vertices == 0:
+        return
+    var weights: PackedFloat32Array = mesh.surface_get_arrays(index)[Mesh.ARRAY_WEIGHTS]
+    var influences = weights.size() / vertices
+    for vertex in vertices:
+        var total = 0.0
+        var all_zero = true
+        var positive = false
+        for influence in influences:
+            var weight = weights[vertex * influences + influence]
+            total += weight
+            if weight != 0.0:
+                all_zero = false
+            if weight > 0.0:
+                positive = true
+        if all_zero:
+            qa.zero_weight_vertices += 1
+        elif positive and absf(total - 1.0) > 1e-3:
+            qa.unnormalized_weight_vertices += 1
+
+func track_type_counts(animation: Animation) -> Dictionary:
+    var counts = {"value": 0, "position": 0, "rotation": 0, "scale": 0, "blend_shape": 0, "method": 0, "bezier": 0, "audio": 0, "animation": 0}
+    var names = {Animation.TYPE_VALUE: "value", Animation.TYPE_POSITION_3D: "position", Animation.TYPE_ROTATION_3D: "rotation", Animation.TYPE_SCALE_3D: "scale", Animation.TYPE_BLEND_SHAPE: "blend_shape", Animation.TYPE_METHOD: "method", Animation.TYPE_BEZIER: "bezier", Animation.TYPE_AUDIO: "audio", Animation.TYPE_ANIMATION: "animation"}
+    for track in animation.get_track_count():
+        var key = names.get(animation.track_get_type(track), "")
+        if counts.has(key):
+            counts[key] += 1
+    return counts
+
 func visit(node: Node, parent_path: String, parent_world: Transform3D) -> void:
     var path = parent_path + "/" + str(node.name)
     var world = parent_world
@@ -128,6 +170,7 @@ func visit(node: Node, parent_path: String, parent_world: Transform3D) -> void:
                 qa.uv0_outside_unit_surfaces += 1
             if format & Mesh.ARRAY_FORMAT_BONES:
                 qa.max_bone_influences = max(qa.max_bone_influences, 8 if format & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS else 4)
+                count_skin(mesh, index, vertices)
             count_material(node.get_active_material(index))
             if surfaces.size() < MAX_SURFACES:
                 surfaces.append({"node": path, "surface": index, "primitive": primitive, "vertices": vertices, "triangles": triangles, "degenerate_triangles": quality.degenerate_triangles, "uv0": format & Mesh.ARRAY_FORMAT_TEX_UV != 0, "uv0_outside_unit": quality.uv0_outside_unit, "uv1": format & Mesh.ARRAY_FORMAT_TEX_UV2 != 0, "material": material_info(node.get_active_material(index))})
@@ -145,7 +188,7 @@ func visit(node: Node, parent_path: String, parent_world: Transform3D) -> void:
                 keys += animation.track_get_key_count(track)
             qa.animation_keys += keys
             if clips.size() < MAX_CLIPS:
-                clips.append({"player": path, "name": str(name), "duration": animation.length, "tracks": animation.get_track_count(), "keys": keys})
+                clips.append({"player": path, "name": str(name), "duration": animation.length, "tracks": animation.get_track_count(), "keys": keys, "loop_mode": int(animation.loop_mode), "track_types": track_type_counts(animation)})
     for child in node.get_children():
         visit(child, path, world)
 

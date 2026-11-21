@@ -6,9 +6,11 @@ const Pose = preload("res://pose.gd")
 var objects: Array = []
 var skeletons: Array = []
 var bones: Array = []
+var meshes: Array = []
 var player_node: AnimationPlayer = null
 var chosen_player: String = ""
 var total_nodes: int = 0
+var blend_shape_total: int = 0
 var overflow: bool = false
 
 func vec(v: Vector3) -> Array:
@@ -32,6 +34,13 @@ func collect(node: Node, parent_path: String) -> void:
             return
         for i in node.get_bone_count():
             bones.append({"node": node, "path": path, "index": i, "name": node.get_bone_name(i), "parent": node.get_bone_parent(i), "baseline": node.get_bone_pose(i)})
+    if node is MeshInstance3D:
+        var count = node.mesh.get_blend_shape_count() if node.mesh != null else 0
+        if blend_shape_total + count > 256:
+            overflow = true
+            return
+        blend_shape_total += count
+        meshes.append({"node": node, "path": path})
     if node is AnimationPlayer and path == chosen_player:
         player_node = node
     for child in node.get_children():
@@ -42,10 +51,76 @@ func fail(message: String) -> void:
     push_error(message)
     quit(1)
 
+func restore_baseline() -> void:
+    player_node.stop()
+    for item in objects:
+        item.node.transform = item.baseline
+    for item in bones:
+        item.node.set_bone_pose(item.index, item.baseline)
+    for skeleton in skeletons:
+        skeleton.force_update_all_bone_transforms()
+
 func pose_at(animation: String, seconds: float) -> void:
     Pose.apply_pose(player_node, animation, seconds, objects, bones)
     for skeleton in skeletons:
         skeleton.force_update_all_bone_transforms()
+
+# Headless runs have no rendering-server skeleton, so this is the engine's CPU skinning.
+# Same bind-pose bake as the review scene: bone global pose times inverse bind.
+func posed_aabb(mesh: MeshInstance3D) -> AABB:
+    var skeleton := mesh.get_node(mesh.skeleton) as Skeleton3D
+    var binds: Array[Transform3D] = []
+    for i in mesh.skin.get_bind_count():
+        var bone = mesh.skin.get_bind_bone(i)
+        if mesh.skin.get_bind_name(i) != &"":
+            bone = skeleton.find_bone(mesh.skin.get_bind_name(i))
+        binds.append(skeleton.get_bone_global_pose(bone) * mesh.skin.get_bind_pose(i))
+    var box: AABB
+    var first = true
+    for surface in mesh.mesh.get_surface_count():
+        var arrays = mesh.mesh.surface_get_arrays(surface)
+        var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+        var skin_bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+        var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+        var influences = skin_bones.size() / vertices.size() if not vertices.is_empty() else 0
+        for v in vertices.size():
+            var point = vertices[v]
+            if influences > 0:
+                point = Vector3.ZERO
+                for k in influences:
+                    var weight = weights[v * influences + k]
+                    if weight > 0.0:
+                        point += binds[skin_bones[v * influences + k]] * vertices[v] * weight
+            box = AABB(point, Vector3.ZERO) if first else box.expand(point)
+            first = false
+    return box
+
+func bounds(box: AABB) -> Dictionary:
+    return {"position": vec(box.position), "size": vec(box.size)}
+
+func mesh_state() -> Array:
+    var values = []
+    for item in meshes:
+        var shapes = []
+        var resource = item.node.mesh
+        if resource != null:
+            for i in resource.get_blend_shape_count():
+                shapes.append({"name": str(resource.get_blend_shape_name(i)), "weight": item.node.get_blend_shape_value(i)})
+        var skinned = null
+        if item.node.skin != null:
+            skinned = bounds(posed_aabb(item.node))
+        values.append({"node": item.path, "blend_shapes": shapes, "skinned_bounds": skinned})
+    return values
+
+func blend_weights() -> Array:
+    var values = []
+    for item in meshes:
+        var resource = item.node.mesh
+        if resource == null:
+            continue
+        for i in resource.get_blend_shape_count():
+            values.append(item.node.get_blend_shape_value(i))
+    return values
 
 # Local transforms and world positions of every node, then every bone.
 func frame_state() -> Array:
@@ -79,11 +154,19 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
     var first = []
     var previous = []
     var state = []
+    restore_baseline()
+    var rest_extent = []
+    for item in meshes:
+        rest_extent.append(posed_aabb(item.node).size.length() if item.node.skin != null else 0.0)
+    var max_extent_change = 0.0
+    var first_weights = []
+    var last_weights = []
     for frame in frames:
         pose_at(name, min(frame * step, clip.length))
         state = frame_state()
         if frame == 0:
             first = state
+            first_weights = blend_weights()
         else:
             for i in targets.size():
                 var speed = (state[1][i] - previous[1][i]).length() / step
@@ -94,6 +177,14 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
                 if spin > angular.value:
                     angular = {"value": spin, "path": targets[i].path, "bone": targets[i].bone}
                     angular_proof = {"from": matrix(previous[0][i]), "to": matrix(state[0][i]), "step": step}
+            if frame == frames - 1:
+                last_weights = blend_weights()
+        for i in meshes.size():
+            if meshes[i].node.skin == null:
+                continue
+            var change = absf(posed_aabb(meshes[i].node).size.length() - rest_extent[i])
+            if change > max_extent_change:
+                max_extent_change = change
         previous = state
     clip.loop_mode = loop_mode
     var seam = {"position": 0.0, "rotation": 0.0}
@@ -108,7 +199,10 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
             is_root = bones[i - objects.size()].parent == -1
         if is_root:
             root_motion.append({"path": targets[i].path, "bone": targets[i].bone, "displacement": vec(state[1][i] - first[1][i])})
-    return {"frame_rate": FRAME_RATE, "frames": frames, "seconds_per_frame": step, "loop_seam": seam, "max_linear_speed": linear, "max_angular_speed": angular, "root_motion": root_motion, "linear_proof": linear_proof, "angular_proof": angular_proof}
+    var blend_shape_seam = 0.0
+    for i in first_weights.size():
+        blend_shape_seam = max(blend_shape_seam, absf(last_weights[i] - first_weights[i]))
+    return {"frame_rate": FRAME_RATE, "frames": frames, "seconds_per_frame": step, "loop_seam": seam, "max_linear_speed": linear, "max_angular_speed": angular, "root_motion": root_motion, "linear_proof": linear_proof, "angular_proof": angular_proof, "max_extent_change": max_extent_change, "blend_shape_seam": blend_shape_seam}
 
 func _initialize() -> void:
     call_deferred("run")
@@ -155,7 +249,7 @@ func run() -> void:
         for item in bones:
             var pose = item.node.get_bone_global_pose(item.index)
             bone_values.append({"skeleton_transform": matrix(pose), "world_transform": matrix(item.node.global_transform * pose)})
-        samples.append({"normalized_time": time, "seconds": seconds, "nodes": node_values, "bones": bone_values})
+        samples.append({"normalized_time": time, "seconds": seconds, "nodes": node_values, "bones": bone_values, "meshes": mesh_state()})
     var qa = motion_qa(config.animation, animation, "/" + str(scene.name))
     var report = {"status": "ok", "godot_version": Engine.get_version_info(), "player": chosen_player, "animation": config.animation, "duration": animation.length, "loop_mode": animation.loop_mode, "units": "metres", "bone_space": "skeleton relative and Godot world", "nodes": node_inventory, "bones": bone_inventory, "samples": samples, "qa": qa}
     var file = FileAccess.open("res://report.json", FileAccess.WRITE)

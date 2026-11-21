@@ -17,6 +17,8 @@ QA_KEYS = {
     "max_linear_speed",
     "max_angular_speed",
     "root_motion",
+    "max_extent_change",
+    "blend_shape_seam",
 }
 
 
@@ -30,6 +32,61 @@ def validate_times(times):
         raise ValueError(
             "Choose 2–9 strictly increasing finite normalized times in [0, 1]"
         )
+
+
+def blend_shape(value):
+    return (
+        isinstance(value, dict)
+        and set(value) == {"name", "weight"}
+        and isinstance(value["name"], str)
+        and value["name"] != ""
+        and number(value["weight"])
+    )
+
+
+def skinned_bounds(value):
+    return value is None or (
+        isinstance(value, dict)
+        and set(value) == {"position", "size"}
+        and vector(value["position"])
+        and vector(value["size"])
+    )
+
+
+def mesh_record(value, paths):
+    if not (
+        isinstance(value, dict)
+        and set(value) == {"node", "blend_shapes", "skinned_bounds"}
+        and isinstance(value["node"], str)
+        and value["node"] in paths
+        and isinstance(value["blend_shapes"], list)
+        and all(blend_shape(shape) for shape in value["blend_shapes"])
+        and skinned_bounds(value["skinned_bounds"])
+    ):
+        return False
+    names = [shape["name"] for shape in value["blend_shapes"]]
+    return len(set(names)) == len(names)
+
+
+def validate_meshes(samples, nodes):
+    paths = {node["path"] for node in nodes}
+    listed = []
+    for sample in samples:
+        meshes = sample.get("meshes") if isinstance(sample, dict) else None
+        if not isinstance(meshes, list) or any(
+            not mesh_record(mesh, paths) for mesh in meshes
+        ):
+            raise ValueError("Motion sample meshes are invalid")
+        listed.append(meshes)
+    order = [mesh["node"] for mesh in listed[0]]
+    if any([mesh["node"] for mesh in meshes] != order for meshes in listed):
+        raise ValueError("Motion sample meshes are invalid")
+    for index in range(len(order)):
+        skinned = [row[index]["skinned_bounds"] is not None for row in listed]
+        if any(skinned) and not all(skinned):
+            raise ValueError("Motion sample meshes are invalid")
+    if sum(len(mesh["blend_shapes"]) for mesh in listed[0]) > 256:
+        raise ValueError("Motion sample meshes are invalid")
 
 
 def validate_report(report, player, animation, times):
@@ -114,7 +171,8 @@ def validate_report(report, player, animation, times):
             )
         ):
             raise ValueError("Motion sample is incomplete or has the wrong time")
-    qa = validate_qa(report.get("qa"), duration, nodes, bones)
+    validate_meshes(report["samples"], nodes)
+    qa = validate_qa(report.get("qa"), duration, nodes, bones, report["samples"])
     if not _root_motion_matches(qa, report["samples"], times, nodes, bones):
         raise ValueError("Motion QA metrics are invalid")
     report["qa"] = qa
@@ -265,7 +323,7 @@ def _root_motion_matches(qa, samples, times, nodes, bones):
     return True
 
 
-def validate_qa(qa, duration, nodes, bones):
+def validate_qa(qa, duration, nodes, bones, samples):
     """The 30 fps motion metrics, refused when a value, its proof, or its target is invalid."""
     paths = {n["path"] for n in nodes}
     bone_keys = {(b["skeleton"], b["name"]) for b in bones}
@@ -287,6 +345,15 @@ def validate_qa(qa, duration, nodes, bones):
             and target(value, value["value"] == 0)
             and (value["value"] == 0) is (value["path"] is None)
         )
+
+    skinned = any(
+        mesh["skinned_bounds"] is not None
+        for sample in samples
+        for mesh in sample["meshes"]
+    )
+    shaped = any(
+        mesh["blend_shapes"] for sample in samples for mesh in sample["meshes"]
+    )
 
     if (
         not isinstance(qa, dict)
@@ -320,6 +387,12 @@ def validate_qa(qa, duration, nodes, bones):
             or not vector(m["displacement"])
             for m in qa["root_motion"]
         )
+        or not number(qa["max_extent_change"])
+        or qa["max_extent_change"] < 0
+        or (not skinned and qa["max_extent_change"] != 0)
+        or not number(qa["blend_shape_seam"])
+        or qa["blend_shape_seam"] < 0
+        or (not shaped and qa["blend_shape_seam"] != 0)
     ):
         raise ValueError("Motion QA metrics are invalid")
     return {key: qa[key] for key in qa if key in QA_KEYS}

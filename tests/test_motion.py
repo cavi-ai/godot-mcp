@@ -7,9 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cavi_mcp_core.contracts import OperationUnknown
-from test_support import animated, missing_tools, textured_cubes
+from test_support import animated, missing_tools, skinned_cube, textured_cubes
 
-from godot_mcp import motion, review
+from godot_mcp import config, motion, review
 
 STILL = {"value": 0, "path": None, "bone": None}
 QA = {
@@ -22,6 +22,8 @@ QA = {
     "root_motion": [],
     "linear_proof": None,
     "angular_proof": None,
+    "max_extent_change": 0,
+    "blend_shape_seam": 0,
 }
 
 
@@ -49,6 +51,7 @@ class MotionRequestTests(unittest.TestCase):
             "seconds": 0,
             "nodes": [{"local_transform": t, "world_transform": t}],
             "bones": [],
+            "meshes": [],
         }
         step = 1 / 30
         moving_qa = {
@@ -149,6 +152,7 @@ class MotionRequestTests(unittest.TestCase):
             "seconds": 1 / 3,
             "nodes": [{"local_transform": transform, "world_transform": transform}],
             "bones": [],
+            "meshes": [],
         }
         report = {
             "status": "ok",
@@ -174,7 +178,13 @@ class MotionRequestTests(unittest.TestCase):
         pose = {"skeleton_transform": t, "world_transform": t}
         node = {"local_transform": t, "world_transform": t}
         b = {"skeleton": "/s", "index": 0, "name": "root", "parent": -1}
-        sample = {"normalized_time": 0, "seconds": 0, "nodes": [node], "bones": [pose]}
+        sample = {
+            "normalized_time": 0,
+            "seconds": 0,
+            "nodes": [node],
+            "bones": [pose],
+            "meshes": [],
+        }
         report = {
             "status": "ok",
             "player": "/p",
@@ -212,6 +222,84 @@ class MotionRequestTests(unittest.TestCase):
         ):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 motion.validate_report({**report, "bones": bad}, "/p", "walk", [0, 1])
+
+    def test_mesh_samples_and_blend_seam_are_checked(self):
+        transform = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
+        node = {"local_transform": transform, "world_transform": transform}
+        body = {
+            "node": "/body",
+            "blend_shapes": [{"name": "smile", "weight": 1.5}],
+            "skinned_bounds": {"position": [0, 0, 0], "size": [1, 1, 1]},
+        }
+        prop = {"node": "/prop", "blend_shapes": [], "skinned_bounds": None}
+        sample = {
+            "normalized_time": 0,
+            "seconds": 0,
+            "nodes": [node, node],
+            "bones": [],
+            "meshes": [body, prop],
+        }
+        report = {
+            "status": "ok",
+            "player": "/p",
+            "animation": "walk",
+            "duration": 1.0,
+            "loop_mode": 0,
+            "godot_version": {},
+            "units": "metres",
+            "bone_space": "skeleton relative and Godot world",
+            "nodes": [
+                {"path": "/body", "type": "MeshInstance3D"},
+                {"path": "/prop", "type": "Node3D"},
+            ],
+            "bones": [],
+            "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
+            "qa": {**QA, "max_extent_change": 0.25, "blend_shape_seam": 0.5},
+        }
+        motion.validate_report(report, "/p", "walk", [0, 1])
+        missing = {**body, "node": "/missing"}
+        uneven = {
+            **body,
+            "skinned_bounds": {"position": [0, 0], "size": [1, 1, 1]},
+        }
+        for bad in (
+            {
+                **report,
+                "samples": [
+                    {**sample, "meshes": [missing, prop]},
+                    report["samples"][1],
+                ],
+            },
+            {
+                **report,
+                "samples": [
+                    {**sample, "meshes": [uneven, prop]},
+                    report["samples"][1],
+                ],
+            },
+            {
+                **report,
+                "qa": {
+                    key: value
+                    for key, value in report["qa"].items()
+                    if key != "blend_shape_seam"
+                },
+            },
+            {
+                **report,
+                "samples": [
+                    sample,
+                    {
+                        **sample,
+                        "normalized_time": 1,
+                        "seconds": 1,
+                        "meshes": [prop, body],
+                    },
+                ],
+            },
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                motion.validate_report(bad, "/p", "walk", [0, 1])
 
     def test_missing_or_empty_clip_is_rejected_before_output(self):
         with tempfile.TemporaryDirectory() as d:
@@ -287,6 +375,7 @@ class MotionRequestTests(unittest.TestCase):
                 "seconds": 0,
                 "nodes": [{"local_transform": t, "world_transform": t}],
                 "bones": [],
+                "meshes": [],
             }
             report = {
                 "status": "ok",
@@ -317,3 +406,37 @@ class MotionRequestTests(unittest.TestCase):
             ):
                 motion.inspect_motion(root, "asset.glb", "out", "/p", "clip", [0, 1])
             self.assertFalse((root / "out/receipt.json").exists())
+
+    @unittest.skipUnless(
+        config.locate(config.GODOT) or os.environ.get("CI"), "Godot is not installed"
+    )
+    def test_lift_samples_skinned_bounds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "rig.glb").write_bytes(skinned_cube(lift=2.0))
+            report = motion.inspect_motion(
+                root,
+                "rig.glb",
+                "motion",
+                "/subject/AnimationPlayer",
+                "Lift",
+                [0, 1],
+            )["report"]
+            body = [
+                mesh["node"]
+                for mesh in report["samples"][0]["meshes"]
+                if mesh["node"].endswith("/Body")
+            ]
+            self.assertEqual(len(body), 1)
+            bounds = []
+            for sample in report["samples"]:
+                mesh = next(
+                    item for item in sample["meshes"] if item["node"] == body[0]
+                )
+                self.assertIsNotNone(mesh["skinned_bounds"])
+                bounds.append(mesh["skinned_bounds"])
+            self.assertAlmostEqual(
+                bounds[1]["position"][1] - bounds[0]["position"][1], 2.0, places=4
+            )
+            self.assertAlmostEqual(report["qa"]["max_extent_change"], 0.0, places=4)
+            self.assertEqual(report["qa"]["blend_shape_seam"], 0)

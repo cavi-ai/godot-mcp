@@ -20,6 +20,8 @@ QA = {
     "max_linear_speed": STILL,
     "max_angular_speed": STILL,
     "root_motion": [],
+    "linear_proof": None,
+    "angular_proof": None,
 }
 
 
@@ -41,11 +43,19 @@ class MotionRequestTests(unittest.TestCase):
 
     def test_report_rejects_bad_time_shape_and_identity(self):
         t = {"origin": [0, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
+        arrived = {"origin": [1, 0, 0], "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
         sample = {
             "normalized_time": 0,
             "seconds": 0,
             "nodes": [{"local_transform": t, "world_transform": t}],
             "bones": [],
+        }
+        step = 1 / 30
+        moving_qa = {
+            **QA,
+            "max_linear_speed": {"value": 1.0, "path": "/n", "bone": None},
+            "linear_proof": {"from": [0, 0, 0], "to": [step, 0, 0], "step": step},
+            "root_motion": [{"path": "/n", "bone": None, "displacement": [1, 0, 0]}],
         }
         report = {
             "status": "ok",
@@ -58,22 +68,51 @@ class MotionRequestTests(unittest.TestCase):
             "bone_space": "skeleton relative and Godot world",
             "nodes": [{"path": "/n", "type": "Node3D"}],
             "bones": [],
-            "samples": [sample, {**sample, "normalized_time": 1, "seconds": 1}],
-            "qa": {
-                **QA,
-                "max_linear_speed": {"value": 1.0, "path": "/n", "bone": None},
-                "root_motion": [
-                    {"path": "/n", "bone": None, "displacement": [1, 0, 0]}
-                ],
-            },
+            "samples": [
+                sample,
+                {
+                    **sample,
+                    "normalized_time": 1,
+                    "seconds": 1,
+                    "nodes": [{"local_transform": t, "world_transform": arrived}],
+                },
+            ],
+            "qa": moving_qa,
         }
         motion.validate_report(report, "/p", "walk", [0, 1])
-        moving = report["qa"]["max_linear_speed"]
+        self.assertEqual(set(report["qa"]), set(QA) - {"linear_proof", "angular_proof"})
+        moving = moving_qa["max_linear_speed"]
         for bad in (
             {**report, "qa": {**QA, "frames": 1}},
             {**report, "qa": {**QA, "seconds_per_frame": 0.5}},
-            {**report, "qa": {**QA, "max_linear_speed": {**moving, "path": "/x"}}},
-            {**report, "qa": {**QA, "max_linear_speed": {**moving, "path": None}}},
+            {
+                **report,
+                "qa": {**moving_qa, "max_linear_speed": {**moving, "path": "/x"}},
+            },
+            {
+                **report,
+                "qa": {**moving_qa, "max_linear_speed": {**moving, "path": None}},
+            },
+            {
+                **report,
+                "qa": {
+                    **moving_qa,
+                    "linear_proof": {
+                        "from": [0, 0, 0],
+                        "to": [0, 0, 0],
+                        "step": step,
+                    },
+                },
+            },
+            {
+                **report,
+                "qa": {
+                    **moving_qa,
+                    "root_motion": [
+                        {"path": "/n", "bone": None, "displacement": [0, 0, 0]}
+                    ],
+                },
+            },
             {
                 **report,
                 "qa": {
@@ -151,6 +190,18 @@ class MotionRequestTests(unittest.TestCase):
             "qa": {
                 **QA,
                 "max_angular_speed": {"value": 2.0, "path": "/s", "bone": "root"},
+                "angular_proof": {
+                    "from": t,
+                    "to": {
+                        "origin": [0, 0, 0],
+                        "basis": [
+                            [math.cos(1 / 15), 0, -math.sin(1 / 15)],
+                            [0, 1, 0],
+                            [math.sin(1 / 15), 0, math.cos(1 / 15)],
+                        ],
+                    },
+                    "step": 1 / 30,
+                },
             },
         }
         motion.validate_report(report, "/p", "walk", [0, 1])

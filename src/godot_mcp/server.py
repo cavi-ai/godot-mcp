@@ -17,9 +17,9 @@ from .contracts import (
     ReviewStatus,
     Status,
 )
-from .framing import Framing
 from .inspection import Budget
 from .pose import Pose
+from .review import Framing
 
 
 class GodotServer(Server):

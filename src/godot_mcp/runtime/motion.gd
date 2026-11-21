@@ -65,36 +65,6 @@ func pose_at(animation: String, seconds: float) -> void:
     for skeleton in skeletons:
         skeleton.force_update_all_bone_transforms()
 
-# Headless runs have no rendering-server skeleton, so this is the engine's CPU skinning.
-# Same bind-pose bake as the review scene: bone global pose times inverse bind.
-func posed_aabb(mesh: MeshInstance3D) -> AABB:
-    var skeleton := mesh.get_node(mesh.skeleton) as Skeleton3D
-    var binds: Array[Transform3D] = []
-    for i in mesh.skin.get_bind_count():
-        var bone = mesh.skin.get_bind_bone(i)
-        if mesh.skin.get_bind_name(i) != &"":
-            bone = skeleton.find_bone(mesh.skin.get_bind_name(i))
-        binds.append(skeleton.get_bone_global_pose(bone) * mesh.skin.get_bind_pose(i))
-    var box: AABB
-    var first = true
-    for surface in mesh.mesh.get_surface_count():
-        var arrays = mesh.mesh.surface_get_arrays(surface)
-        var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-        var skin_bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
-        var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
-        var influences = skin_bones.size() / vertices.size() if not vertices.is_empty() else 0
-        for v in vertices.size():
-            var point = vertices[v]
-            if influences > 0:
-                point = Vector3.ZERO
-                for k in influences:
-                    var weight = weights[v * influences + k]
-                    if weight > 0.0:
-                        point += binds[skin_bones[v * influences + k]] * vertices[v] * weight
-            box = AABB(point, Vector3.ZERO) if first else box.expand(point)
-            first = false
-    return box
-
 func bounds(box: AABB) -> Dictionary:
     return {"position": vec(box.position), "size": vec(box.size)}
 
@@ -108,7 +78,7 @@ func mesh_state() -> Array:
                 shapes.append({"name": str(resource.get_blend_shape_name(i)), "weight": item.node.get_blend_shape_value(i)})
         var skinned = null
         if item.node.skin != null:
-            skinned = bounds(posed_aabb(item.node))
+            skinned = bounds(Pose.posed_aabb(item.node, true))
         values.append({"node": item.path, "blend_shapes": shapes, "skinned_bounds": skinned})
     return values
 
@@ -137,7 +107,7 @@ func frame_state() -> Array:
 func turn(a: Transform3D, b: Transform3D) -> float:
     return a.basis.get_rotation_quaternion().angle_to(b.basis.get_rotation_quaternion())
 
-func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
+func motion_qa(name: String, clip: Animation, scene_path: String, rest_sizes: Array) -> Dictionary:
     var targets = []
     for item in objects:
         targets.append({"path": item.path, "bone": null})
@@ -155,9 +125,6 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
     var previous = []
     var state = []
     restore_baseline()
-    var rest_extent = []
-    for item in meshes:
-        rest_extent.append(posed_aabb(item.node).size.length() if item.node.skin != null else 0.0)
     var max_extent_change = 0.0
     var first_weights = []
     var last_weights = []
@@ -182,7 +149,7 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
         for i in meshes.size():
             if meshes[i].node.skin == null:
                 continue
-            var change = absf(posed_aabb(meshes[i].node).size.length() - rest_extent[i])
+            var change = Pose.posed_aabb(meshes[i].node, true).size.distance_to(rest_sizes[i])
             if change > max_extent_change:
                 max_extent_change = change
         previous = state
@@ -238,6 +205,10 @@ func run() -> void:
         node_inventory.append({"path": item.path, "type": item.node.get_class()})
     for item in bones:
         bone_inventory.append({"skeleton": item.path, "index": item.index, "name": item.name, "parent": item.parent})
+    restore_baseline()
+    var rest_sizes = []
+    for item in meshes:
+        rest_sizes.append(Pose.posed_aabb(item.node, true).size if item.node.skin != null else Vector3.ZERO)
     var samples = []
     for time in config.normalized_times:
         var seconds = float(time) * animation.length
@@ -250,7 +221,7 @@ func run() -> void:
             var pose = item.node.get_bone_global_pose(item.index)
             bone_values.append({"skeleton_transform": matrix(pose), "world_transform": matrix(item.node.global_transform * pose)})
         samples.append({"normalized_time": time, "seconds": seconds, "nodes": node_values, "bones": bone_values, "meshes": mesh_state()})
-    var qa = motion_qa(config.animation, animation, "/" + str(scene.name))
+    var qa = motion_qa(config.animation, animation, "/" + str(scene.name), rest_sizes)
     var report = {"status": "ok", "godot_version": Engine.get_version_info(), "player": chosen_player, "animation": config.animation, "duration": animation.length, "loop_mode": animation.loop_mode, "units": "metres", "bone_space": "skeleton relative and Godot world", "nodes": node_inventory, "bones": bone_inventory, "samples": samples, "qa": qa}
     var file = FileAccess.open("res://report.json", FileAccess.WRITE)
     if file == null:

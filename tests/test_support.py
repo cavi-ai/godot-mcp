@@ -236,9 +236,11 @@ def textured_cubes(count=1, slide=None, size=1.0, flawed=False):
     )
 
 
-def skinned_cube(lift, duration=1.0):
+def skinned_cube(lift, duration=1.0, morph=False):
     """A 1 m cube skinned to one bone; the clip "Lift" raises the bone by ``lift``."""
     corners = [(x, y, z) for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)]
+    if morph:
+        corners = [(x * 2, y, z) for x, y, z in corners]
     quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4)]
     quads.append((1, 5, 7, 3))
     parts = [
@@ -250,6 +252,11 @@ def skinned_cube(lift, duration=1.0):
         struct.pack("<2f", 0, duration),
         struct.pack("<6f", 0, 0, 0, 0, lift, 0),
     ]
+    if morph:
+        parts += [
+            struct.pack("<24f", *(c for x, y, z in corners for c in (-x / 2, y, 0))),
+            struct.pack("<2f", 0, 1),
+        ]
     views = []
     for part in parts:
         offset = sum(view["byteLength"] for view in views)
@@ -263,48 +270,59 @@ def skinned_cube(lift, duration=1.0):
         (5126, 2, "SCALAR"),
         (5126, 2, "VEC3"),
     ]
+    if morph:
+        kinds += [(5126, 8, "VEC3"), (5126, 2, "SCALAR")]
     accessors = [
         {"bufferView": i, "componentType": component, "count": count, "type": kind}
         for i, (component, count, kind) in enumerate(kinds)
     ]
-    accessors[0] |= {"min": [-0.5] * 3, "max": [0.5] * 3}
+    accessors[0] |= {
+        "min": [-1 if morph else -0.5, -0.5, -0.5],
+        "max": [1 if morph else 0.5, 0.5, 0.5],
+    }
     accessors[5] |= {"min": [0], "max": [duration]}
     binary = b"".join(parts)
-    raw = json.dumps(
-        {
-            "asset": {"version": "2.0"},
-            "scene": 0,
-            "scenes": [{"nodes": [0, 1]}],
-            "nodes": [{"name": "Body", "mesh": 0, "skin": 0}, {"name": "Bone"}],
-            "meshes": [
-                {
-                    "primitives": [
-                        {
-                            "attributes": {
-                                "POSITION": 0,
-                                "JOINTS_0": 2,
-                                "WEIGHTS_0": 3,
-                            },
-                            "indices": 1,
-                        }
-                    ]
-                }
-            ],
-            "skins": [{"joints": [1], "inverseBindMatrices": 4}],
-            "animations": [
-                {
-                    "name": "Lift",
-                    "channels": [
-                        {"sampler": 0, "target": {"node": 1, "path": "translation"}}
-                    ],
-                    "samplers": [{"input": 5, "output": 6}],
-                }
-            ],
-            "accessors": accessors,
-            "buffers": [{"byteLength": len(binary)}],
-            "bufferViews": views,
-        }
-    ).encode()
+    data = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0, 1]}],
+        "nodes": [{"name": "Body", "mesh": 0, "skin": 0}, {"name": "Bone"}],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {
+                            "POSITION": 0,
+                            "JOINTS_0": 2,
+                            "WEIGHTS_0": 3,
+                        },
+                        "indices": 1,
+                    }
+                ]
+            }
+        ],
+        "skins": [{"joints": [1], "inverseBindMatrices": 4}],
+        "animations": [
+            {
+                "name": "Lift",
+                "channels": [
+                    {"sampler": 0, "target": {"node": 1, "path": "translation"}}
+                ],
+                "samplers": [{"input": 5, "output": 6}],
+            }
+        ],
+        "accessors": accessors,
+        "buffers": [{"byteLength": len(binary)}],
+        "bufferViews": views,
+    }
+    if morph:
+        data["meshes"][0]["weights"] = [0]
+        data["meshes"][0]["primitives"][0]["targets"] = [{"POSITION": 7}]
+        data["animations"][0]["channels"].append(
+            {"sampler": 1, "target": {"node": 0, "path": "weights"}}
+        )
+        data["animations"][0]["samplers"].append({"input": 5, "output": 8})
+    raw = json.dumps(data).encode()
     raw += b" " * (-len(raw) % 4)
     return (
         struct.pack("<4sII", b"glTF", 2, 28 + len(raw) + len(binary))

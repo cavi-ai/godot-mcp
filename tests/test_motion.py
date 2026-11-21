@@ -440,3 +440,26 @@ class MotionRequestTests(unittest.TestCase):
             )
             self.assertAlmostEqual(report["qa"]["max_extent_change"], 0.0, places=4)
             self.assertEqual(report["qa"]["blend_shape_seam"], 0)
+
+    @unittest.skipUnless(
+        config.locate(config.GODOT) or os.environ.get("CI"), "Godot is not installed"
+    )
+    def test_morph_changes_skinned_bounds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "rig.glb").write_bytes(skinned_cube(lift=0, morph=True))
+            report = motion.inspect_motion(
+                root, "rig.glb", "motion", "/subject/AnimationPlayer", "Lift", [0, 1]
+            )["report"]
+            meshes = [
+                next(m for m in sample["meshes"] if m["node"].endswith("/Body"))
+                for sample in report["samples"]
+            ]
+            for mesh, expected, weight in zip(meshes, ([2, 1, 1], [1, 2, 1]), (0, 1)):
+                for actual, value in zip(mesh["skinned_bounds"]["size"], expected):
+                    self.assertAlmostEqual(actual, value, places=4)
+                self.assertAlmostEqual(
+                    mesh["blend_shapes"][0]["weight"], weight, places=4
+                )
+            self.assertAlmostEqual(report["qa"]["max_extent_change"], 2**0.5, places=4)
+            self.assertAlmostEqual(report["qa"]["blend_shape_seam"], 1, places=4)

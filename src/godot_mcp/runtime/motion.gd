@@ -6,9 +6,11 @@ const Pose = preload("res://pose.gd")
 var objects: Array = []
 var skeletons: Array = []
 var bones: Array = []
+var meshes: Array = []
 var player_node: AnimationPlayer = null
 var chosen_player: String = ""
 var total_nodes: int = 0
+var blend_shape_total: int = 0
 var overflow: bool = false
 
 func vec(v: Vector3) -> Array:
@@ -32,6 +34,13 @@ func collect(node: Node, parent_path: String) -> void:
             return
         for i in node.get_bone_count():
             bones.append({"node": node, "path": path, "index": i, "name": node.get_bone_name(i), "parent": node.get_bone_parent(i), "baseline": node.get_bone_pose(i)})
+    if node is MeshInstance3D:
+        var count = node.mesh.get_blend_shape_count() if node.mesh != null else 0
+        if blend_shape_total + count > 256:
+            overflow = true
+            return
+        blend_shape_total += count
+        meshes.append({"node": node, "path": path})
     if node is AnimationPlayer and path == chosen_player:
         player_node = node
     for child in node.get_children():
@@ -42,10 +51,46 @@ func fail(message: String) -> void:
     push_error(message)
     quit(1)
 
+func restore_baseline() -> void:
+    player_node.stop()
+    for item in objects:
+        item.node.transform = item.baseline
+    for item in bones:
+        item.node.set_bone_pose(item.index, item.baseline)
+    for skeleton in skeletons:
+        skeleton.force_update_all_bone_transforms()
+
 func pose_at(animation: String, seconds: float) -> void:
     Pose.apply_pose(player_node, animation, seconds, objects, bones)
     for skeleton in skeletons:
         skeleton.force_update_all_bone_transforms()
+
+func bounds(box: AABB) -> Dictionary:
+    return {"position": vec(box.position), "size": vec(box.size)}
+
+func mesh_state() -> Array:
+    var values = []
+    for item in meshes:
+        var shapes = []
+        var resource = item.node.mesh
+        if resource != null:
+            for i in resource.get_blend_shape_count():
+                shapes.append({"name": str(resource.get_blend_shape_name(i)), "weight": item.node.get_blend_shape_value(i)})
+        var skinned = null
+        if item.node.skin != null:
+            skinned = bounds(Pose.posed_aabb(item.node, true))
+        values.append({"node": item.path, "blend_shapes": shapes, "skinned_bounds": skinned})
+    return values
+
+func blend_weights() -> Array:
+    var values = []
+    for item in meshes:
+        var resource = item.node.mesh
+        if resource == null:
+            continue
+        for i in resource.get_blend_shape_count():
+            values.append(item.node.get_blend_shape_value(i))
+    return values
 
 # Local transforms and world positions of every node, then every bone.
 func frame_state() -> Array:
@@ -62,7 +107,7 @@ func frame_state() -> Array:
 func turn(a: Transform3D, b: Transform3D) -> float:
     return a.basis.get_rotation_quaternion().angle_to(b.basis.get_rotation_quaternion())
 
-func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
+func motion_qa(name: String, clip: Animation, scene_path: String, rest_sizes: Array) -> Dictionary:
     var targets = []
     for item in objects:
         targets.append({"path": item.path, "bone": null})
@@ -79,11 +124,16 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
     var first = []
     var previous = []
     var state = []
+    restore_baseline()
+    var max_extent_change = 0.0
+    var first_weights = []
+    var last_weights = []
     for frame in frames:
         pose_at(name, min(frame * step, clip.length))
         state = frame_state()
         if frame == 0:
             first = state
+            first_weights = blend_weights()
         else:
             for i in targets.size():
                 var speed = (state[1][i] - previous[1][i]).length() / step
@@ -94,6 +144,14 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
                 if spin > angular.value:
                     angular = {"value": spin, "path": targets[i].path, "bone": targets[i].bone}
                     angular_proof = {"from": matrix(previous[0][i]), "to": matrix(state[0][i]), "step": step}
+            if frame == frames - 1:
+                last_weights = blend_weights()
+        for i in meshes.size():
+            if meshes[i].node.skin == null:
+                continue
+            var change = Pose.posed_aabb(meshes[i].node, true).size.distance_to(rest_sizes[i])
+            if change > max_extent_change:
+                max_extent_change = change
         previous = state
     clip.loop_mode = loop_mode
     var seam = {"position": 0.0, "rotation": 0.0}
@@ -108,7 +166,10 @@ func motion_qa(name: String, clip: Animation, scene_path: String) -> Dictionary:
             is_root = bones[i - objects.size()].parent == -1
         if is_root:
             root_motion.append({"path": targets[i].path, "bone": targets[i].bone, "displacement": vec(state[1][i] - first[1][i])})
-    return {"frame_rate": FRAME_RATE, "frames": frames, "seconds_per_frame": step, "loop_seam": seam, "max_linear_speed": linear, "max_angular_speed": angular, "root_motion": root_motion, "linear_proof": linear_proof, "angular_proof": angular_proof}
+    var blend_shape_seam = 0.0
+    for i in first_weights.size():
+        blend_shape_seam = max(blend_shape_seam, absf(last_weights[i] - first_weights[i]))
+    return {"frame_rate": FRAME_RATE, "frames": frames, "seconds_per_frame": step, "loop_seam": seam, "max_linear_speed": linear, "max_angular_speed": angular, "root_motion": root_motion, "linear_proof": linear_proof, "angular_proof": angular_proof, "max_extent_change": max_extent_change, "blend_shape_seam": blend_shape_seam}
 
 func _initialize() -> void:
     call_deferred("run")
@@ -144,6 +205,10 @@ func run() -> void:
         node_inventory.append({"path": item.path, "type": item.node.get_class()})
     for item in bones:
         bone_inventory.append({"skeleton": item.path, "index": item.index, "name": item.name, "parent": item.parent})
+    restore_baseline()
+    var rest_sizes = []
+    for item in meshes:
+        rest_sizes.append(Pose.posed_aabb(item.node, true).size if item.node.skin != null else Vector3.ZERO)
     var samples = []
     for time in config.normalized_times:
         var seconds = float(time) * animation.length
@@ -155,8 +220,8 @@ func run() -> void:
         for item in bones:
             var pose = item.node.get_bone_global_pose(item.index)
             bone_values.append({"skeleton_transform": matrix(pose), "world_transform": matrix(item.node.global_transform * pose)})
-        samples.append({"normalized_time": time, "seconds": seconds, "nodes": node_values, "bones": bone_values})
-    var qa = motion_qa(config.animation, animation, "/" + str(scene.name))
+        samples.append({"normalized_time": time, "seconds": seconds, "nodes": node_values, "bones": bone_values, "meshes": mesh_state()})
+    var qa = motion_qa(config.animation, animation, "/" + str(scene.name), rest_sizes)
     var report = {"status": "ok", "godot_version": Engine.get_version_info(), "player": chosen_player, "animation": config.animation, "duration": animation.length, "loop_mode": animation.loop_mode, "units": "metres", "bone_space": "skeleton relative and Godot world", "nodes": node_inventory, "bones": bone_inventory, "samples": samples, "qa": qa}
     var file = FileAccess.open("res://report.json", FileAccess.WRITE)
     if file == null:

@@ -1,10 +1,16 @@
+import json
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from test_support import glb, missing_tools
+from test_support import glb, missing_tools, textured_cubes
 
-from godot_mcp.review import inspect, prepare
+from godot_mcp import config, review
+from godot_mcp.review import inspect, prepare, scene_selection
 
 
 class ReviewTests(unittest.TestCase):
@@ -101,6 +107,45 @@ class ReviewTests(unittest.TestCase):
             (root / captures["side"]["metadata"]).write_text('{"view":"front"}')
             with self.assertRaisesRegex(ValueError, "metadata"):
                 validate_view_captures(root, receipt)
+
+    def test_lighting_is_stored_and_rejected_before_the_directory_exists(self):
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review")
+            self.assertEqual(receipt["lighting"], "studio")
+            owner = json.loads((root / "review" / "owner.json").read_text())
+            self.assertEqual(owner["lighting"], "studio")
+            self.assertEqual(inspect(root, "review")["lighting"], "studio")
+            self.assertEqual(scene_selection(receipt, False)["lighting"], "studio")
+            for lighting in ("clay", "sun"):
+                prepared = prepare(root, "mesh.glb", lighting, lighting=lighting)
+                self.assertEqual(prepared["lighting"], lighting)
+                self.assertEqual(scene_selection(prepared, False)["lighting"], lighting)
+                self.assertEqual(
+                    json.loads((root / lighting / "owner.json").read_text())[
+                        "lighting"
+                    ],
+                    lighting,
+                )
+            omitted = dict(receipt)
+            del omitted["lighting"]
+            self.assertEqual(scene_selection(omitted, False)["lighting"], "studio")
+            stored = json.loads((root / "review" / "review.json").read_text())
+            del stored["lighting"]
+            del owner["lighting"]
+            (root / "review" / "review.json").write_text(json.dumps(stored))
+            (root / "review" / "owner.json").write_text(json.dumps(owner))
+            self.assertNotIn("lighting", inspect(root, "review"))
+            stored["lighting"] = "night"
+            owner["lighting"] = "night"
+            (root / "review" / "review.json").write_text(json.dumps(stored))
+            (root / "review" / "owner.json").write_text(json.dumps(owner))
+            with self.assertRaises(ValueError):
+                inspect(root, "review")
+            with self.assertRaises(ValueError):
+                prepare(root, "mesh.glb", "night", lighting="night")
+            self.assertFalse((root / "night").exists())
 
     def test_static_framing_is_validated_and_sealed(self):
         import json
@@ -1173,3 +1218,44 @@ class OversizeSealTests(unittest.TestCase):
             self.assertEqual(inspect(root, "review")["state"], "prepared")
             attempt = next((root / "review" / "attempts").iterdir())
             self.assertFalse((attempt / "bundle").exists())
+
+
+READY = "godot-review-ready "
+
+
+@unittest.skipUnless(
+    config.locate(config.GODOT) or os.environ.get("CI"), "Godot is not installed"
+)
+class ReviewLightingSceneTests(unittest.TestCase):
+    def test_headless_lighting_keeps_one_camera_frame(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        source = textured_cubes()
+        runtime = Path(review.__file__).parent / "runtime"
+        godot = str(config.tools((config.GODOT,))[config.GODOT])
+        distances = {}
+        for lighting in ("studio", "clay", "sun"):
+            project = root / lighting
+            project.mkdir()
+            for name in ("project.godot", "main.tscn", "main.gd"):
+                shutil.copyfile(runtime / name, project / name)
+            (project / "subject.glb").write_bytes(source)
+            receipt = {"view": "three-quarter", "lighting": lighting}
+            (project / review.SELECTION_FILE).write_text(
+                json.dumps(scene_selection(receipt, fallback=False))
+            )
+            run = subprocess.run(
+                [godot, "--headless", "--path", str(project), "--quit-after", "30"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            lines = [line for line in run.stdout.splitlines() if line.startswith(READY)]
+            self.assertEqual(len(lines), 1, run.stdout + run.stderr)
+            scene = json.loads(lines[0].removeprefix(READY))
+            self.assertEqual(scene["lighting"], lighting)
+            distances[lighting] = scene["camera_frame"]["distance"]
+        self.assertEqual(distances["clay"], distances["studio"])
+        self.assertEqual(distances["sun"], distances["studio"])

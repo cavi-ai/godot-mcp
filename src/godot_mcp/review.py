@@ -525,7 +525,13 @@ def inspect(root, directory, include_status=True):
             raise ValueError("Missing rendered Godot version")
     if include_status:
         receipt = dict(receipt)
-        receipt["cleanup_pending"] = (dest / ".capture.pending").exists()
+        marker = dest / ".capture.pending"
+        receipt["cleanup_pending"] = False
+        if marker.exists() or marker.is_symlink():
+            try:
+                check_capture_marker(marker, directory, receipt)
+            except CleanupUnverified:
+                receipt["cleanup_pending"] = True
         attempts = dest / "attempts"
         entries = (
             [p for p in attempts.iterdir() if p.is_dir()] if attempts.exists() else []
@@ -1009,11 +1015,52 @@ def runtime_export(root, tools, inputs, evidence, temp):
     return target, key, manifest
 
 
+def capture_marker(directory, receipt, phase):
+    return {
+        "version": 1,
+        "kind": "capture_pending",
+        "directory": directory,
+        "owner": {key: receipt[key] for key in OWNER} | selection(receipt),
+        "phase": phase,
+    }
+
+
+def check_capture_marker(path, directory, receipt, phase="safe"):
+    try:
+        if path.is_symlink():
+            raise ValueError("Marker is a symlink")
+        value = files.load_json(path)
+        expected = capture_marker(directory, receipt, phase)
+        if (
+            type(value) is not dict
+            or type(value.get("version")) is not int
+            or json.dumps(value, sort_keys=True, allow_nan=False)
+            != json.dumps(expected, sort_keys=True, allow_nan=False)
+        ):
+            raise ValueError("Marker does not match this review")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise CleanupUnverified("Previous capture cleanup is unverified") from exc
+
+
+def native_checkpoint(marker, directory, receipt, name, operation):
+    atomic_json(marker, capture_marker(directory, receipt, name))
+    try:
+        result = operation()
+    except CleanupUnverified:
+        raise
+    except Exception:
+        # Native helpers report uncertain cleanup separately; ordinary errors have
+        # verified cleanup and can return to the safe checkpoint.
+        atomic_json(marker, capture_marker(directory, receipt, "safe"))
+        raise
+    atomic_json(marker, capture_marker(directory, receipt, "safe"))
+    return result
+
+
 def capture(root, directory):
     import fcntl  # POSIX only; the rest of the server also runs where it is missing.
 
     dest = inside(root, directory)
-    inspect(root, directory, include_status=False)
     fd = os.open(
         dest / ".capture.lock",
         os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
@@ -1024,11 +1071,18 @@ def capture(root, directory):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError("A capture is already active") from exc
+        receipt = inspect(root, directory, include_status=False)
         marker = dest / ".capture.pending"
-        if marker.exists():
-            raise CleanupUnverified("Previous capture cleanup is unverified")
-        config.tools()
-        atomic_json(marker, {"kind": "capture_pending"})
+        if marker.exists() or marker.is_symlink():
+            check_capture_marker(marker, directory, receipt)
+            if receipt["state"] == "captured":
+                marker.unlink()
+                return receipt
+        else:
+            if receipt["state"] != "prepared":
+                raise ValueError("Review is not prepared")
+            config.tools()
+            atomic_json(marker, capture_marker(directory, receipt, "safe"))
         verified = False
         try:
             result = capture_locked(root, directory)
@@ -1037,6 +1091,8 @@ def capture(root, directory):
         except CleanupUnverified:
             raise
         except Exception as exc:
+            # A failed checkpoint write can leave native state uncertain.
+            check_capture_marker(marker, directory, receipt)
             verified = True
             raise OperationUnknown(str(exc)) from exc
         finally:
@@ -1080,8 +1136,13 @@ def capture_locked(root, directory):
         selection_hash = digest(export / SELECTION_FILE)
         if files.load_json(export / SELECTION_FILE) != chosen:
             raise ValueError("Copied review selection changed")
-        cached, runtime_key, manifest = runtime_export(
-            root, tools, inputs, evidence, temp
+        marker = dest / ".capture.pending"
+        cached, runtime_key, manifest = native_checkpoint(
+            marker,
+            directory,
+            receipt,
+            "runtime_export",
+            lambda: runtime_export(root, tools, inputs, evidence, temp),
         )
         for name, expected in manifest.items():
             shutil.copyfile(cached / name, export / name)
@@ -1126,11 +1187,23 @@ def capture_locked(root, directory):
                         "browser",
                     )
 
-                run_with_browser(command, profile, client, evidence)
+                native_checkpoint(
+                    marker,
+                    directory,
+                    receipt,
+                    "browser",
+                    lambda: run_with_browser(command, profile, client, evidence),
+                )
             finally:
                 server.shutdown()
                 thread.join()
-        godot_version = run_owned([godot, "--version"], 10, evidence, "version").strip()
+        godot_version = native_checkpoint(
+            marker,
+            directory,
+            receipt,
+            "version",
+            lambda: run_owned([godot, "--version"], 10, evidence, "version"),
+        ).strip()
         if (
             digest(export / "subject.glb", LIMIT) != inputs["source_sha256"]
             or digest(export / SELECTION_FILE) != selection_hash

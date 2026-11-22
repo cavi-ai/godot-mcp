@@ -776,6 +776,129 @@ class CensusFaultTests(unittest.TestCase):
             self.assertIn("injected", (root / "census.groups.json").read_text())
 
 
+class CaptureCheckpointTests(unittest.TestCase):
+    def test_safe_interruption_retries_and_preserves_attempt(self):
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            source = root / "mesh.glb"
+            source.write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review")
+            attempts = root / "review" / "attempts"
+            attempts.mkdir()
+            (attempts / "previous").mkdir()
+            with patch("godot_mcp.review.config.tools", return_value={}):
+                with (
+                    patch(
+                        "godot_mcp.review.capture_locked", side_effect=KeyboardInterrupt
+                    ),
+                    self.assertRaises(KeyboardInterrupt),
+                ):
+                    review.capture(root, "review")
+                marker = root / "review" / ".capture.pending"
+                self.assertEqual(json.loads(marker.read_text())["phase"], "safe")
+                self.assertFalse(inspect(root, "review")["cleanup_pending"])
+                with patch(
+                    "godot_mcp.review.capture_locked", return_value=receipt
+                ) as call:
+                    self.assertEqual(review.capture(root, "review"), receipt)
+                    call.assert_called_once()
+                self.assertFalse(marker.exists())
+                self.assertTrue((attempts / "previous").is_dir())
+                self.assertEqual(source.read_bytes(), glb({}))
+
+    def test_active_legacy_and_tampered_markers_block(self):
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            source = root / "mesh.glb"
+            source.write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review")
+            marker = root / "review" / ".capture.pending"
+            for value in (
+                {"kind": "capture_pending"},
+                review.capture_marker("review", receipt, "browser"),
+                review.capture_marker("elsewhere", receipt, "safe"),
+                review.capture_marker("review", receipt, "safe") | {"extra": True},
+                review.capture_marker("review", receipt, "safe") | {"version": True},
+                review.capture_marker("review", receipt, "safe")
+                | {
+                    "owner": review.capture_marker("review", receipt, "safe")["owner"]
+                    | {"camera_frame_evidence": 1}
+                },
+            ):
+                marker.write_text(json.dumps(value))
+                self.assertTrue(inspect(root, "review")["cleanup_pending"])
+                with patch("godot_mcp.review.capture_locked") as call:
+                    with self.assertRaises(review.CleanupUnverified):
+                        review.capture(root, "review")
+                    call.assert_not_called()
+                self.assertEqual(json.loads(marker.read_text()), value)
+                self.assertEqual(source.read_bytes(), glb({}))
+
+    def test_safe_marker_after_publication_returns_verified_receipt(self):
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "mesh.glb").write_bytes(glb({}))
+            receipt = prepare(root, "mesh.glb", "review") | {"state": "captured"}
+            marker = root / "review" / ".capture.pending"
+            marker.write_text(
+                json.dumps(review.capture_marker("review", receipt, "safe"))
+            )
+            with (
+                patch("godot_mcp.review.inspect", return_value=receipt) as inspect_call,
+                patch("godot_mcp.review.capture_locked") as capture_call,
+            ):
+                self.assertEqual(review.capture(root, "review"), receipt)
+                inspect_call.assert_called_once_with(
+                    root, "review", include_status=False
+                )
+                capture_call.assert_not_called()
+            self.assertFalse(marker.exists())
+
+    def test_native_intervals_leave_active_checkpoint_on_interruption(self):
+        from unittest.mock import patch
+
+        for phase in ("runtime_export", "browser", "version"):
+            with self.subTest(phase=phase), TemporaryDirectory() as d:
+                root = Path(d)
+                (root / "mesh.glb").write_bytes(glb({}))
+                receipt = prepare(root, "mesh.glb", "review")
+                tools = {name: str(root / "tool") for name in config.REVIEW_TOOLS}
+                inputs = {"source_sha256": receipt["source_sha256"]}
+
+                def interrupt(*args, **kwargs):
+                    raise KeyboardInterrupt()
+
+                with (
+                    patch("godot_mcp.review.config.tools", return_value=tools),
+                    patch("godot_mcp.review.input_snapshot", return_value=inputs),
+                    patch(
+                        "godot_mcp.review.runtime_export",
+                        side_effect=interrupt if phase == "runtime_export" else None,
+                        return_value=(root, "cache", {}),
+                    ),
+                    patch(
+                        "godot_mcp.review.run_with_browser",
+                        side_effect=interrupt if phase == "browser" else None,
+                    ),
+                    patch(
+                        "godot_mcp.review.run_owned",
+                        side_effect=interrupt if phase == "version" else None,
+                    ),
+                    self.assertRaises(KeyboardInterrupt),
+                ):
+                    review.capture(root, "review")
+                marker = json.loads((root / "review" / ".capture.pending").read_text())
+                self.assertEqual(marker["phase"], phase)
+                with self.assertRaises(review.CleanupUnverified):
+                    review.capture(root, "review")
+
+
 class UnknownCleanupTests(unittest.TestCase):
     def test_unverified_cleanup_blocks_retry(self):
         import os

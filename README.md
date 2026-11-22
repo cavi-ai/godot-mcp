@@ -65,7 +65,7 @@ python3 -m http.server --bind 127.0.0.1 --directory <review-directory>/<bundle>
 
 Stop the server after review. Capture uses Godot's Web export, Compatibility renderer and WebGL 2. The workspace's `.godot-review-runtime` directory caches the export by review runtime, Godot editor and Web template. Each bundle has its own export files, `subject.glb` and `selection.json`, so you can serve the bundle on its own. The scene loads the GLB with the same runtime glTF importer used for inspection.
 
-If inspection fails, preserve the output directory and read its process logs before retrying in a new directory. If a capture has an unknown outcome, use `godot_review_inspect` to examine the latest attempt. A pending cleanup marker blocks another capture until you resolve the processes and outputs recorded in that attempt. Capture verification compares the server and tool files with their recorded hashes. After upgrading the server or capture tools, prepare a new review to capture and verify with the new versions.
+If inspection fails, preserve the output directory and read its process logs before retrying in a new directory. If a capture has an unknown outcome, use `godot_review_inspect` to examine the latest attempt. A review interrupted between native operations can be retried for the same source and selection. `cleanup_pending` is false for a matching safe checkpoint; if native cleanup is unknown, it is true and the marker blocks another capture. Capture verification compares the server and tool files with their recorded hashes. After upgrading the server or capture tools, prepare a new review to capture and verify with the new versions.
 
 </details>
 

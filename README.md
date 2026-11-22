@@ -2,7 +2,7 @@
 
 ## Take it for a spin.
 
-![A frog king on a turntable, inspected by an otter curator](assets/godot-mcp-hero.png)
+![A frog king on a turntable, inspected by an otter curator](https://raw.githubusercontent.com/cavi-ai/godot-mcp/main/assets/godot-mcp-hero.png)
 
 See your GLB as Godot imports it. Cavi Godot MCP helps your assistant inspect meshes, materials, skeletons and animation clips, then prepare a rendered view you can review together. Orbit a static asset or capture a selected animation pose without building a review scene by hand.
 
@@ -12,11 +12,13 @@ Try asking:
 
 ## Set up
 
-Native inspection and capture require macOS or Linux, Python 3.15 or newer, [uv](https://docs.astral.sh/uv/), a Godot editor and an existing workspace. Install the server:
+Use macOS or Linux, Python 3.15 or newer, [uv](https://docs.astral.sh/uv/), a stable Godot editor and an existing workspace. Install the server:
 
 ```sh
 uv tool install cavi-godot-mcp
 ```
+
+Update an existing installation with `uv tool upgrade cavi-godot-mcp`.
 
 Configure your MCP client with the executable and the absolute workspace path:
 
@@ -33,9 +35,11 @@ Configure your MCP client with the executable and the absolute workspace path:
 }
 ```
 
-Godot, Chromium and Node.js are found where they are installed: `/Applications/Godot.app`, `/Applications/Google Chrome.app` and `/opt/homebrew/bin/node`, then `godot`, `chromium` and `node` on `PATH`. Capture uses the single-threaded Web template (`web_nothreads_release.zip`) for the editor's version from Godot's export templates directory; install the export templates from the Godot editor. Capture needs Chromium with WebGL 2 support and Node.js 22 or newer.
+If the client cannot find the command, use the absolute path to `cavi-godot-mcp` in the directory printed by `uv tool dir --bin`.
 
-To use other files, set `CAVI_GODOT_BIN`, `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_BIN` or `CAVI_NODE_BIN` to an absolute path. A set variable always wins: when its file is missing, that tool is reported as not found. `godot_status` reports which tools are found.
+Inspection and motion sampling need the Godot editor. Capture also needs Chromium with WebGL 2 support, Node.js 22 or newer and the editor's matching single-threaded Web export template (`web_nothreads_release.zip`). Install the export templates from the Godot editor.
+
+The server looks for `/Applications/Godot.app`, `/Applications/Google Chrome.app` and `/opt/homebrew/bin/node`, then checks `PATH` for `godot`, `chromium` and `node`. To choose specific files, set `CAVI_GODOT_BIN`, `CAVI_GODOT_WEB_TEMPLATE`, `CAVI_CHROMIUM_BIN` or `CAVI_NODE_BIN` to their absolute paths. Run `godot_status` to check discovery.
 
 ## Review your asset
 
@@ -59,16 +63,16 @@ To open the interactive view, serve the receipt's relative `bundle` within the r
 python3 -m http.server --bind 127.0.0.1 --directory <review-directory>/<bundle>
 ```
 
-Stop the server after review. Godot's headless mode does not render; capture uses a Godot Web export with the Compatibility renderer and WebGL 2. The export is built once per review runtime, Godot editor and Web template and kept in the workspace's `.godot-review-runtime` directory. Each review bundle serves its `subject.glb` and `selection.json` beside the export, and the scene loads the GLB with Godot's runtime glTF importer, as inspection does. The review does not establish gameplay, collision, traversal, room architecture or appearance in another engine. Perform final acceptance in the consuming engine.
+Stop the server after review. Capture uses Godot's Web export, Compatibility renderer and WebGL 2. The workspace's `.godot-review-runtime` directory caches the export by review runtime, Godot editor and Web template. Each bundle has its own export files, `subject.glb` and `selection.json`, so you can serve the bundle on its own. The scene loads the GLB with the same runtime glTF importer used for inspection.
 
-If inspection fails, preserve its output directory and inspect the receipt and process logs before retrying. If a capture has an unknown outcome, use `godot_review_inspect` to examine the latest attempt. A pending cleanup marker blocks another capture; resolve the owned processes and output before removing it.
+If inspection fails, preserve the output directory and read its process logs before retrying in a new directory. If a capture has an unknown outcome, use `godot_review_inspect` to examine the latest attempt. A pending cleanup marker blocks another capture until you resolve the processes and outputs recorded in that attempt. Capture verification compares the server and tool files with their recorded hashes. After upgrading the server or capture tools, prepare a new review to capture and verify with the new versions.
 
 </details>
 
 ## Security
 
-The server runs locally over MCP stdio. Report security concerns privately as described in [SECURITY.md](SECURITY.md).
+The server runs locally over MCP stdio. Report security concerns privately using the [security policy](https://github.com/cavi-ai/godot-mcp/blob/main/SECURITY.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/cavi-ai/godot-mcp/blob/main/LICENSE).

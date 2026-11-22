@@ -37,6 +37,9 @@ jobs:
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "tag $TAG is not on main"; exit 1; }
           grep -q "^## ${TAG#v} - " CHANGELOG.md || { echo "CHANGELOG.md has no section for ${TAG#v}"; exit 1; }
       - run: uv sync --locked --dev
+      - uses: ./.github/actions/setup-godot
+        with:
+          github-token: ${{ github.token }}
       - run: uv run --locked python -m unittest discover -s tests
       - name: Build the wheel and sdist
         env:

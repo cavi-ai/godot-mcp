@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cavi-godot-mcp"
-version = "0.1.0"
-description = "Local MCP tools for reviewing static Godot assets"
+version = "0.2.0"
+description = "Local MCP tools for inspecting and rendering Godot GLB assets"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -15,6 +15,11 @@ dependencies = ["anyio>=4.5,<5", "cavi-mcp-core>=0.1.4,<0.2", "mcp>=2.3,<3"]
 
 [project.scripts]
 cavi-godot-mcp = "godot_mcp.server:main"
+
+[project.urls]
+Repository = "https://github.com/cavi-ai/godot-mcp"
+Changelog = "https://github.com/cavi-ai/godot-mcp/blob/main/CHANGELOG.md"
+Issues = "https://github.com/cavi-ai/godot-mcp/issues"
 
 [dependency-groups]
 dev = ["ruff>=0.14,<1"]

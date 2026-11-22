@@ -1,6 +1,6 @@
 # Contributing
 
-Use Python 3.15 or newer, `uv`, and a Rust toolchain for the protocol evaluator.
+Use Python 3.15 or newer, `uv` and a stable Godot editor. Set `CAVI_GODOT_BIN` to the editor executable if it is outside the default locations.
 
 ```sh
 uv sync --locked --dev
@@ -10,7 +10,7 @@ uv run --locked ruff format --check .
 uv build
 ```
 
-The unit suite runs inspection and motion in the installed Godot and skips them when none is found; CI installs the newest stable Godot and requires them. The protocol evaluator does not launch Godot or Chromium. Build and run the evaluator with:
+The suite runs inspection, motion and review scene tests in headless Godot. The check and release workflows install the newest stable Linux editor and require those tests. The protocol evaluator uses the MCP server over stdio. Install a Rust toolchain to build and run it:
 
 ```sh
 uv run --locked python evals/evaluator.py build --root .tmp/mcp-eval --branch main
@@ -19,4 +19,4 @@ MCPEVAL_EXECUTABLE="$PWD/.tmp/mcp-eval/bin/mcpeval" uv run --locked python evals
 
 The evaluator build records its Git revision and executable hash; evaluation rejects a changed executable.
 
-Native visual acceptance needs the configured Godot editor, matching Web template, headless Chromium and Node. Keep its workspace isolated, retain actual process and image evidence, and inspect the result. Native visual acceptance requires an actual Godot render and the resulting image evidence.
+For changes to capture or rendering, prepare and capture a GLB in a separate workspace with the matching Web template, Chromium and Node.js. Check the rendered PNG and use `godot_review_inspect` to verify the bundle.

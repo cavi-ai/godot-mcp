@@ -1,0 +1,23 @@
+name: Install Godot
+description: Install the newest stable Linux editor and verify its checksum.
+inputs:
+  github-token:
+    description: Token for downloading the Godot release assets.
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        directory="$(mktemp -d "$RUNNER_TEMP/godot.XXXXXX")"
+        gh release download --repo godotengine/godot --dir "$directory" \
+          --pattern 'Godot_v*-stable_linux.x86_64.zip' --pattern SHA512-SUMS.txt
+        cd "$directory"
+        grep -E '  Godot_v[^ ]+-stable_linux\.x86_64\.zip$' SHA512-SUMS.txt | sha512sum --check --strict
+        unzip -q Godot_v*-stable_linux.x86_64.zip
+        editors=("$directory"/Godot_v*-stable_linux.x86_64)
+        [[ "${#editors[@]}" -eq 1 && -x "${editors[0]}" ]]
+        echo "CAVI_GODOT_BIN=${editors[0]}" >> "$GITHUB_ENV"

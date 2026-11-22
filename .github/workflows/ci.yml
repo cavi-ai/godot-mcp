@@ -13,16 +13,9 @@ jobs:
         with:
           python-version: "3.15"
       - run: uv sync --locked --dev
-      - name: Install the newest stable Godot
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download --repo godotengine/godot --dir "$RUNNER_TEMP/godot" \
-            --pattern 'Godot_v*-stable_linux.x86_64.zip' --pattern SHA512-SUMS.txt
-          cd "$RUNNER_TEMP/godot"
-          grep -E '  Godot_v[^ ]+-stable_linux\.x86_64\.zip$' SHA512-SUMS.txt | sha512sum --check --strict
-          unzip -q Godot_v*-stable_linux.x86_64.zip
-          echo "CAVI_GODOT_BIN=$(echo "$RUNNER_TEMP"/godot/Godot_v*-stable_linux.x86_64)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-godot
+        with:
+          github-token: ${{ github.token }}
       - run: uv run --locked python -m unittest discover -s tests
       - run: uv run --locked ruff check .
       - run: uv run --locked ruff format --check .

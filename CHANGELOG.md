@@ -1,10 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-11-22
 
 ### Added
 
-- Every tool declares an output schema for its result.
+- Every MCP tool declares a result schema.
+- Interactive pose reviews open paused at the requested time and provide playback, scrubbing and reset controls.
+- Static reviews accept a reference camera frame and can capture front, three-quarter and side views in one session.
+- Static reviews support geometry-only and vertex-colored drafts.
 - Inspection reports `qa` metrics for the whole scene: triangles, vertices, zero-area triangles, UV0 outside 0–1, materials, textures and their RGBA8 size, non-power-of-two textures, bone weights, blend shapes, mirrored and non-uniformly scaled meshes, animation keys and rest-pose bounds; surfaces and clips record their zero-area triangles, UV0 range and keys.
 - `godot_asset_inspect` takes a `budget` of upper limits on those metrics, draw calls, bones and the base offset from the scene origin, and records each check in the result and receipt.
 - Motion reports `qa` from 30 fps sampling of the whole clip: the loop seam between the first and last frame, the fastest node or bone movement and rotation, and root motion of top-level nodes and root bones.
@@ -26,7 +29,7 @@
 - Inspection and motion reports give `units` as `metres`; motion reports replace `Godot scene units`.
 - Inspection counts surface vertices, indices and UV sets without copying mesh arrays.
 - The review scene lights the asset with a neutral grey sky for ambient light and reflections and uses AgX tonemapping; captured scene metadata records `renderer`.
-- Capture reuses one Web export per review runtime, Godot editor and Web template from `.godot-review-runtime` instead of importing and exporting every review; the scene loads `subject.glb` and `selection.json` from the bundle with Godot's runtime glTF importer, and the receipt's `project` records `runtime_export` and `selection.json`.
+- Capture caches the Web export for each review runtime, Godot editor and Web template. Each bundle loads its own `subject.glb` and `selection.json` with Godot's runtime glTF importer. The receipt records the export key and selection hash.
 
 ### Fixed
 
@@ -36,6 +39,7 @@
 - Pose and motion requests for a missing clip, a time past the clip end or a zero-length clip are refused before Godot runs.
 - The Godot inspection report's shape, counts, truncation flags and references are checked before a receipt is written.
 - Inspecting a captured review without tool configuration is refused instead of raising `KeyError`.
+- Editing one review bundle no longer changes the cached Web export or other captures.
 
 ## 0.1.0 - 2026-11-16
 

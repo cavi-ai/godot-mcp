@@ -503,7 +503,7 @@ class OwnershipTests(unittest.TestCase):
 
 
 class RuntimeCacheTests(unittest.TestCase):
-    def test_reviews_share_one_cached_runtime_export(self):
+    def test_reviews_reuse_export_without_sharing_writable_files(self):
         import json
         import os
         from unittest.mock import patch
@@ -525,9 +525,12 @@ class RuntimeCacheTests(unittest.TestCase):
                 )
             }
 
+            exports = []
+
             def fake_run(command, timeout, evidence, label):
                 (evidence / (label + ".stderr")).write_text("")
                 if label == "export":
+                    exports.append(command[-1])
                     (Path(command[-1]).parent / "index.wasm").write_bytes(b"wasm")
                 if label == "browser":
                     path = Path(command[-1])
@@ -550,15 +553,19 @@ class RuntimeCacheTests(unittest.TestCase):
                 for name, view in (("first", "front"), ("second", "side")):
                     prepare(root, "mesh.glb", name, view=view)
                     receipts[name] = capture(root, name)
+                bundles = {
+                    name: root / name / receipt["bundle"]
+                    for name, receipt in receipts.items()
+                }
+                (bundles["first"] / "index.wasm").write_bytes(b"changed")
+                with self.assertRaisesRegex(ValueError, "Review artifact changed"):
+                    inspect(root, "first")
                 self.assertEqual(inspect(root, "second")["state"], "captured")
-            bundles = {name: root / name / r["bundle"] for name, r in receipts.items()}
+            self.assertEqual(len(exports), 1)
             key = receipts["first"]["project"]["runtime_export"]
             self.assertEqual(receipts["second"]["project"]["runtime_export"], key)
             cached = root / ".godot-review-runtime" / key / "index.wasm"
-            for bundle in bundles.values():
-                self.assertEqual(
-                    (bundle / "index.wasm").stat().st_ino, cached.stat().st_ino
-                )
+            self.assertEqual(cached.read_bytes(), b"wasm")
             self.assertEqual(
                 json.loads((bundles["second"] / SELECTION_FILE).read_text())["view"],
                 "side",

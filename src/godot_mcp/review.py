@@ -927,6 +927,8 @@ def runtime_export(root, tools, inputs, evidence, temp):
     """
     preset = export_preset(tools["CAVI_GODOT_WEB_TEMPLATE"])
     identity = {
+        # Earlier exports can still share writable files with existing bundles.
+        "bundle_files": "independent",
         "runtime": {
             name: inputs["provider"]["runtime"][name] for name in RUNTIME_FILES
         },
@@ -1082,10 +1084,7 @@ def capture_locked(root, directory):
             root, tools, inputs, evidence, temp
         )
         for name, expected in manifest.items():
-            try:
-                os.link(cached / name, export / name)
-            except OSError:
-                shutil.copyfile(cached / name, export / name)
+            shutil.copyfile(cached / name, export / name)
             if digest(export / name, ARTIFACT_LIMIT) != expected:
                 raise ValueError("Shared runtime cache changed")
         godot = str(tools["CAVI_GODOT_BIN"])

@@ -4,6 +4,8 @@
 
 ![A frog king on a turntable, inspected by an otter curator](https://raw.githubusercontent.com/cavi-ai/godot-mcp/main/assets/godot-mcp-hero.png)
 
+[![PyPI version](https://img.shields.io/pypi/v/cavi-godot-mcp)](https://pypi.org/project/cavi-godot-mcp/) [![PyPI weekly downloads](https://img.shields.io/pypi/dw/cavi-godot-mcp?label=PyPI%20downloads%2Fweek)](https://pypistats.org/packages/cavi-godot-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 See your GLB as Godot imports it. Cavi Godot MCP helps your assistant inspect meshes, materials, skeletons and animation clips, then prepare a rendered view you can review together. Orbit a static asset or capture a selected animation pose without building a review scene by hand.
 
 Try asking:
